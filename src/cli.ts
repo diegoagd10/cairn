@@ -19,13 +19,13 @@ Usage: cairn <command> [options]
   doc get ID                           Read a document, blockers, and comments
   doc update ID [--title TEXT] [--body-file PATH] [--label LABEL]
                 [--blocked-by IDS] [--revision N]
-  doc status ID todo|in-progress|done|cancelled
+  doc status ID ready-for-agent|done
   doc export ID                        Write original Markdown to stdout
   comment add ID --body-file PATH       Append context to a document
-  next                                 List unblocked todo tickets ready for agents
+  next                                 List ready-for-agent tickets with completed blockers
   export [--output PATH]               Export current project as JSON (exclusive file)
   backup --output PATH                 Create a consistent SQLite backup
-  serve [--port 4317]                   Open a read-only viewer on 127.0.0.1
+  serve [--port 4317]                   Open the local viewer with editing controls
   service install [--port 4317] [--db PATH]  Install and start a background viewer
   service start                        Start service and enable startup at login
   service stop                         Stop service and disable startup at login
@@ -35,7 +35,7 @@ Usage: cairn <command> [options]
 Options:
   --project ID_OR_NAME  Select a project explicitly; otherwise resolve current repo
   --db PATH            Database path (or CAIRN_DB; default: XDG data dir/cairn/cairn.sqlite)
-  --label LABEL        Triage label, default: ready-for-agent
+  --label LABEL        Legacy metadata; does not affect status or ready tickets
   --blocked-by IDS     Comma-separated ticket IDs; use "" to clear blockers
   --body-file -        Read Markdown from stdin; content is stored unchanged
   --json              Explicit JSON mode (already the default for data commands)
@@ -47,7 +47,7 @@ Examples:
   cairn ticket create --parent SPEC-abc12345 --title "Search notes" --body-file /tmp/ticket.md
   cairn next --project cairn
 
-The viewer is read-only. Writes go through the CLI. No GitHub Issues are created.
+The viewer can edit titles, Markdown and status. Other edits use the CLI. No GitHub Issues are created.
 `;
 
 function parse() {

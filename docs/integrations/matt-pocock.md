@@ -96,21 +96,20 @@ cairn export
 
 ### Triage and implementation
 
-Triage labels and lifecycle statuses are separate. Use the project's configured label vocabulary. Cairn's default roles are `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, and `wontfix`. Set a document's label with `--label` on creation or `cairn doc update ID --label LABEL`. New documents default to `ready-for-agent`.
+New documents default to `ready-for-agent` status. Legacy triage labels remain stored as metadata and can be changed with `--label`, but they do not control readiness.
 
 ```sh
 cairn next
 cairn doc get TICKET-ID
-cairn doc status TICKET-ID in-progress
 cairn comment add TICKET-ID --body-file "path/to/verification.md"
 cairn doc status TICKET-ID done
 ```
 
-`cairn next` returns only `todo` tickets labelled exactly `ready-for-agent` whose blockers are all done. If the project uses a different readiness label, use `ticket list` and inspect statuses and blockers explicitly. Read the selected ticket, its comments, and its parent spec before implementing it.
+`cairn next` returns only tickets with `ready-for-agent` status whose blockers are all done. Read the selected ticket, its comments, and its parent spec before implementing it.
 
-Lifecycle statuses are `todo`, `in-progress`, `done`, and `cancelled`. A blocked ticket cannot start or finish. A cancelled blocker remains unresolved until its dependency is removed or the blocker is completed. Changing a triage label to `wontfix` does not cancel a ticket; change the lifecycle status explicitly when appropriate.
+Lifecycle statuses are `ready-for-agent` and `done`. Keep a ticket ready-for-agent during implementation. A blocked ticket cannot finish. Labels do not change its lifecycle status.
 
-Verify the ticket's acceptance criteria, record the evidence in a comment, then mark it done. Cairn enforces dependency rules but does not run tests or judge acceptance criteria. Close a parent spec explicitly only after checking its overall outcome and after all its tickets are done or cancelled.
+Verify the ticket's acceptance criteria, record the evidence in a comment, then mark it done. Cairn enforces dependency rules but does not run tests or judge acceptance criteria. Close a parent spec explicitly only after checking its overall outcome and after all its tickets are done.
 
 For parallel agents, assign distinct tickets explicitly and give each agent its project and ticket IDs. `cairn next` lists available work; it does not atomically claim or assign it. Agents on the same computer must use the same database. Worktrees of a registered repository can resolve to the same project; registering a separate clone can associate it through a normalized remote.
 

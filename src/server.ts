@@ -62,7 +62,7 @@ export function serve(store: Store) {
     ["/style.css", { type: "text/css; charset=utf-8", file: "style.css" }],
     ["/favicon.svg", { type: "image/svg+xml", file: "favicon.svg" }],
   ]);
-  return createServer((req, res) => {
+  return createServer(async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "no-referrer");
@@ -76,7 +76,8 @@ export function serve(store: Store) {
       });
       res.end(JSON.stringify(value));
     };
-    // Loopback binding plus Host/Origin checks prevents DNS rebinding and cross-origin reads.
+    // Loopback binding plus Host/Origin checks prevent DNS rebinding. Document
+    // writes additionally require a same-origin JSON request from our client.
     const expectedHost = `127.0.0.1:${(req.socket.address() as { port: number }).port}`;
     if (
       req.headers.host !== expectedHost ||
@@ -85,15 +86,106 @@ export function serve(store: Store) {
       send(403, { error: "Use the local Cairn viewer URL." });
       return;
     }
-    if (req.method !== "GET") {
-      res.setHeader("Allow", "GET");
-      send(405, {
-        error: "The viewer is read-only. Use the Cairn CLI to edit.",
-      });
-      return;
-    }
     try {
       const url = new URL(req.url || "/", `http://${expectedHost}`);
+      const statusMatch = url.pathname.match(
+        /^\/api\/projects\/([^/]+)\/documents\/([^/]+)\/status$/,
+      );
+      const docMatch = url.pathname.match(
+        /^\/api\/projects\/([^/]+)\/documents\/([^/]+)$/,
+      );
+      const writeMatch = statusMatch || docMatch;
+      const action = statusMatch ? "status" : "edit";
+      const limit = statusMatch ? 4096 : 1024 * 1024;
+      if (req.method === "POST" && writeMatch) {
+        if (
+          req.headers.origin !== `http://${expectedHost}` ||
+          req.headers["x-cairn-request"] !== action ||
+          (req.headers["sec-fetch-site"] &&
+            req.headers["sec-fetch-site"] !== "same-origin")
+        ) {
+          send(403, {
+            error: "Document changes must come from the local Cairn UI.",
+          });
+          return;
+        }
+        if (
+          req.headers["content-type"]?.split(";")[0]?.trim().toLowerCase() !==
+          "application/json"
+        ) {
+          send(415, { error: "Expected application/json." });
+          return;
+        }
+        if (Number(req.headers["content-length"]) > limit) {
+          send(413, { error: "Document request is too large." });
+          req.resume();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        let size = 0;
+        for await (const chunk of req) {
+          size += chunk.length;
+          if (size > limit) {
+            send(413, { error: "Document request is too large." });
+            return;
+          }
+          chunks.push(chunk);
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        if (
+          !body ||
+          typeof body !== "object" ||
+          Array.isArray(body) ||
+          Object.keys(body).some(
+            (key) =>
+              !(statusMatch
+                ? ["status", "revision"]
+                : ["title", "body", "revision"]
+              ).includes(key),
+          ) ||
+          (statusMatch
+            ? typeof body.status !== "string"
+            : typeof body.title !== "string" || typeof body.body !== "string") ||
+          !Number.isSafeInteger(body.revision) ||
+          body.revision < 1
+        ) {
+          send(400, {
+            error: statusMatch
+              ? "Expected a status and a positive document revision."
+              : "Expected a title, Markdown body and a positive document revision.",
+          });
+          return;
+        }
+        const projectId = decodeURIComponent(writeMatch[1]!);
+        const documentId = decodeURIComponent(writeMatch[2]!);
+        const doc = statusMatch
+          ? store.status(projectId, documentId, body.status, body.revision)
+          : store.update(projectId, documentId, {
+              title: body.title,
+              body: body.body,
+              revision: body.revision,
+            });
+        send(
+          200,
+          statusMatch ? doc : {
+            ...doc,
+            html: markdown(doc.body),
+            comments: doc.comments.map((c) => ({ ...c, html: markdown(c.body) })),
+          },
+        );
+        return;
+      }
+      if (req.method !== "GET") {
+        res.setHeader(
+          "Allow",
+          statusMatch ? "POST" : docMatch ? "GET, POST" : "GET",
+        );
+        send(405, {
+          error:
+            "Use GET to read documents or POST to edit their content or status.",
+        });
+        return;
+      }
       const asset = assets.get(url.pathname);
       if (asset) {
         res.writeHead(200, { "Content-Type": asset.type });
@@ -133,9 +225,6 @@ export function serve(store: Store) {
         );
         return;
       }
-      const docMatch = url.pathname.match(
-        /^\/api\/projects\/([^/]+)\/documents\/([^/]+)$/,
-      );
       if (docMatch) {
         const doc = store.get(
           decodeURIComponent(docMatch[1]!),
@@ -150,10 +239,17 @@ export function serve(store: Store) {
       }
       send(404, { error: "Not found." });
     } catch (error) {
-      send(400, {
-        error:
-          error instanceof Error ? error.message : "Could not read project.",
-      });
+      send(
+        error instanceof Error && error.message.startsWith("Revision conflict")
+          ? 409
+          : 400,
+        {
+          error:
+            error instanceof Error
+              ? error.message
+              : "Could not update workspace.",
+        },
+      );
     }
   });
 }

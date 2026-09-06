@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { repository } from "./repo.ts";
 
-export const statuses = ["todo", "in-progress", "done", "cancelled"] as const;
+export const statuses = ["ready-for-agent", "done"] as const;
 export type Status = (typeof statuses)[number];
 export type Kind = "spec" | "ticket";
 export type Project = {
@@ -65,17 +65,19 @@ export class Store {
     this.db = new DatabaseSync(this.path);
     if (path !== ":memory:") chmodSync(this.path, 0o600);
     this.db.exec(
-      "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL;",
+      "PRAGMA busy_timeout=5000; PRAGMA journal_mode=WAL; PRAGMA foreign_keys=OFF; BEGIN IMMEDIATE;",
     );
-    const version = Number(
-      this.db.prepare("PRAGMA user_version").get()?.user_version,
-    );
-    if (version > 1) {
-      this.db.close();
-      throw new Error("This database needs a newer version of Cairn.");
-    }
-    this.db.exec(`
-      BEGIN IMMEDIATE;
+    try {
+      const version = Number(
+        this.db.prepare("PRAGMA user_version").get()?.user_version,
+      );
+      if (version > 2) {
+        throw new Error("This database needs a newer version of Cairn.");
+      }
+      if (version < 2) {
+        // Keep the original schema as migration 1; migration 2 rebuilds only the
+        // documents table so SQLite can enforce the new two-state constraint.
+        this.db.exec(`
       CREATE TABLE IF NOT EXISTS projects (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, identity TEXT NOT NULL UNIQUE,
         remote TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
@@ -100,9 +102,42 @@ export class Store {
       );
       CREATE INDEX IF NOT EXISTS documents_project ON documents(project_id,kind);
       CREATE INDEX IF NOT EXISTS comments_document ON comments(document_id);
-      PRAGMA user_version=1;
-      COMMIT;
+      CREATE TABLE documents_v2 (
+        id TEXT PRIMARY KEY, project_id TEXT NOT NULL REFERENCES projects(id),
+        kind TEXT NOT NULL CHECK(kind IN ('spec','ticket')), title TEXT NOT NULL, body TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'ready-for-agent' CHECK(status IN ('ready-for-agent','done')),
+        label TEXT NOT NULL DEFAULT 'ready-for-agent', parent_id TEXT REFERENCES documents(id),
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
+      INSERT INTO documents_v2
+        SELECT id,project_id,kind,title,body,
+          CASE WHEN status='done' THEN 'done' ELSE 'ready-for-agent' END,
+          label,parent_id,revision + CASE WHEN status='done' THEN 0 ELSE 1 END,
+          created_at,CASE WHEN status='done' THEN updated_at ELSE strftime('%Y-%m-%dT%H:%M:%fZ','now') END
+        FROM documents;
+      DROP TABLE documents;
+      ALTER TABLE documents_v2 RENAME TO documents;
+      CREATE INDEX documents_project ON documents(project_id,kind);
+      UPDATE documents SET status='ready-for-agent',revision=revision+1,
+        updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE kind='spec' AND status='done' AND EXISTS (
+          SELECT 1 FROM documents child WHERE child.parent_id=documents.id AND child.status<>'done'
+        );
+      PRAGMA user_version=2;
     `);
+        if (this.db.prepare("PRAGMA foreign_key_check").all().length)
+          throw new Error(
+            "Database migration found invalid document relationships.",
+          );
+      }
+      this.db.exec("COMMIT; PRAGMA foreign_keys=ON;");
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      this.db.close();
+      throw error;
+    }
   }
   close() {
     this.db.close();
@@ -239,11 +274,7 @@ export class Store {
           throw new Error(
             "A ticket parent must be a spec in the same project.",
           );
-        if (
-          ["done", "cancelled"].includes(
-            this.get(projectId, input.parent).status,
-          )
-        )
+        if (this.get(projectId, input.parent).status === "done")
           throw new Error("Reopen the parent spec before adding a ticket.");
       }
       const id = `${input.kind === "spec" ? "SPEC" : "TKT"}-${randomUUID().slice(0, 8)}`;
@@ -272,13 +303,8 @@ export class Store {
       const blocker = this.get(projectId, ref);
       if (blocker.kind !== "ticket" || ref === id)
         throw new Error("Blockers must be other tickets in this project.");
-      if (
-        ["in-progress", "done"].includes(doc.status) &&
-        blocker.status !== "done"
-      )
-        throw new Error(
-          "An active or finished ticket cannot gain unfinished blockers.",
-        );
+      if (doc.status === "done" && blocker.status !== "done")
+        throw new Error("A finished ticket cannot gain unfinished blockers.");
       const cycle = this.db
         .prepare(
           `WITH RECURSIVE ancestors(id) AS (
@@ -325,45 +351,46 @@ export class Store {
       return this.get(projectId, id);
     });
   }
-  status(projectId: string, id: string, status: string): Detail {
+  status(
+    projectId: string,
+    id: string,
+    status: string,
+    revision?: number,
+  ): Detail {
     if (!statuses.includes(status as Status))
       throw new Error(`Status must be ${statuses.join(", ")}.`);
     return this.transaction(() => {
       const doc = this.get(projectId, id);
-      if (
-        doc.kind === "ticket" &&
-        ["in-progress", "done"].includes(status) &&
-        doc.unresolved.length
-      )
+      if (revision !== undefined && revision !== doc.revision)
+        throw new Error(
+          "Revision conflict. Read the document again before editing.",
+        );
+      if (doc.status === status) return doc;
+      if (doc.kind === "ticket" && status === "done" && doc.unresolved.length)
         throw new Error(`Unfinished blockers: ${doc.unresolved.join(", ")}`);
       if (
         doc.kind === "spec" &&
-        ["done", "cancelled"].includes(status) &&
+        status === "done" &&
         this.list(projectId, "ticket").some(
-          (t) =>
-            t.parent_id === id && !["done", "cancelled"].includes(t.status),
+          (t) => t.parent_id === id && t.status !== "done",
         )
       )
-        throw new Error(
-          "Finish or cancel the spec’s tickets before closing it.",
-        );
+        throw new Error("Finish the spec’s tickets before marking it done.");
       if (doc.status === "done" && status !== "done") {
         const dependents = this.db
           .prepare(
-            "SELECT d.id FROM blockers b JOIN documents d ON d.id=b.ticket_id WHERE b.blocker_id=? AND d.status IN ('in-progress','done')",
+            "SELECT d.id FROM blockers b JOIN documents d ON d.id=b.ticket_id WHERE b.blocker_id=? AND d.status='done'",
           )
           .all(id);
         if (dependents.length)
           throw new Error(
-            "Move active or finished dependent tickets to todo before reopening this blocker.",
+            "Move finished dependent tickets to ready-for-agent before reopening this blocker.",
           );
       }
       if (
         doc.parent_id &&
-        !["done", "cancelled"].includes(status) &&
-        ["done", "cancelled"].includes(
-          this.get(projectId, doc.parent_id).status,
-        )
+        status !== "done" &&
+        this.get(projectId, doc.parent_id).status === "done"
       )
         throw new Error("Reopen the parent spec first.");
       this.db
@@ -383,10 +410,7 @@ export class Store {
   }
   next(projectId: string) {
     return this.list(projectId, "ticket").filter(
-      (t) =>
-        t.status === "todo" &&
-        t.label === "ready-for-agent" &&
-        !t.unresolved.length,
+      (t) => t.status === "ready-for-agent" && !t.unresolved.length,
     );
   }
   export(projectId: string) {
