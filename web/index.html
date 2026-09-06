@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#25483d" />
+    <title>Cairn · Your path, mapped</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/app.js" type="module"></script>
+  </head>
+  <body>
+    <a class="skip" href="#workspace">Skip to workspace</a>
+    <aside class="sidebar">
+      <a href="#" class="brand" aria-label="Cairn home"
+        ><img src="/favicon.svg" width="36" height="36" alt="" />cairn<span
+          >personal workspace</span
+        ></a
+      >
+      <div class="nav-label">
+        YOUR REPOSITORIES <span id="project-count">0</span>
+      </div>
+      <nav id="projects" aria-label="Repositories"></nav>
+      <div class="sidebar-bottom">
+        <span class="live-dot"></span> Local &amp; yours
+        <p>A quiet place to plan<br />your next good thing.</p>
+        <span class="version">CAIRN / 0.1</span>
+      </div>
+    </aside>
+    <main id="workspace" tabindex="-1">
+      <header class="topbar">
+        <div id="breadcrumb">Workspace</div>
+        <div class="top-actions">
+          <span id="connection" role="status">Connecting…</span
+          ><button
+            id="refresh"
+            class="icon-button"
+            aria-label="Refresh workspace"
+            title="Refresh workspace"
+          >
+            ↻
+          </button>
+        </div>
+      </header>
+      <div id="error" class="error" role="alert" hidden></div>
+      <section class="intro">
+        <div>
+          <p class="eyebrow">MAKE THE NEXT STEP CLEAR</p>
+          <h1 id="heading">Your path, mapped.</h1>
+          <p id="subtitle" class="subtitle">
+            Specs set the destination. Tickets show the way.
+          </p>
+        </div>
+        <div class="stone-art" aria-hidden="true">
+          <i></i><i></i><i></i><span>ONE STEP AT A TIME</span>
+        </div>
+      </section>
+      <section id="stats" class="stats" aria-label="Project progress"></section>
+      <section class="work-area">
+        <div class="list-pane">
+          <div class="list-heading">
+            <div class="tabs" role="tablist" aria-label="Document type">
+              <button
+                role="tab"
+                id="tab-spec"
+                data-kind="spec"
+                aria-selected="true"
+              >
+                Specs <span id="spec-count">0</span></button
+              ><button
+                role="tab"
+                id="tab-ticket"
+                data-kind="ticket"
+                aria-selected="false"
+              >
+                Tickets <span id="ticket-count">0</span>
+              </button>
+            </div>
+            <span class="section-note">THE PLAN &amp; THE PATH</span>
+          </div>
+          <div class="filters">
+            <label class="search-label"
+              ><span aria-hidden="true">⌕</span
+              ><input
+                id="search"
+                type="search"
+                placeholder="Find a title or ID…"
+                aria-label="Search documents"
+              /><kbd>/</kbd></label
+            ><select id="status" aria-label="Filter by status">
+              <option value="all">All statuses</option>
+              <option value="ready">Ready to start</option>
+              <option value="blocked">Blocked</option>
+              <option value="todo">To do</option>
+              <option value="in-progress">In progress</option>
+              <option value="done">Done</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+          </div>
+          <div id="documents" aria-live="polite"></div>
+        </div>
+        <aside
+          id="detail"
+          class="detail"
+          aria-label="Document detail"
+          hidden
+        ></aside>
+      </section>
+      <footer class="workspace-footer">
+        <span>Small steps. Meaningful progress.</span
+        ><span>PRIVATE PLANNING, PER REPOSITORY</span>
+      </footer>
+    </main>
+  </body>
+</html>
