@@ -17,6 +17,75 @@ cairn serve
 
 Open **http://127.0.0.1:4317**. The viewer refreshes every 15 seconds while visible; use its refresh button for immediate updates. Stop the server with Ctrl+C. To run without a global link, use `node dist/cli.js` in place of `cairn`.
 
+### Run automatically after a reboot
+
+After the installation above, stop any manually running `cairn serve` with Ctrl+C, then run:
+
+```sh
+cairn service install
+```
+
+The same command works on **Linux with systemd, macOS, and Windows**. It installs the viewer for your current user, starts it in the background, and enables it to start whenever you log in, including after restarting the machine. No open terminal or coding agent is needed. Open **http://127.0.0.1:4317** as usual.
+
+| System | Background manager | Installation |
+| --- | --- | --- |
+| Linux | systemd user service | `${XDG_CONFIG_HOME:-~/.config}/systemd/user/cairn.service` |
+| macOS | launchd LaunchAgent | `~/Library/LaunchAgents/local.cairn.viewer.plist` |
+| Windows | Task Scheduler, current user | Task `Cairn-<your Windows user SID>` in the root task folder |
+
+Run installation from your normal user session. macOS requires a graphical login session. Windows requires Windows PowerShell 5.1 with the ScheduledTasks module (included in Windows 10/11); it registers an interactive task with limited privileges and does not save a password. If an organization restricts task registration, its administrator may need to allow it. These commands do not elevate privileges automatically.
+
+```sh
+cairn service status     # Show runtime state and whether startup is enabled
+cairn service stop       # Stop now AND disable automatic startup
+cairn service start      # Start now AND re-enable automatic startup
+cairn service uninstall  # Stop and remove the service; keep your data
+```
+
+These commands work from any directory and do not require a registered project. There is one service per user, showing all projects in its database. `stop` keeps it off after the next reboot too; use `start` to resume. Uninstallation keeps the database and any log files. Each computer has its own local database; installing on several computers does not synchronize their projects.
+
+Linux and macOS restart the viewer on failure. Windows retries three times at one-minute intervals, permits running on battery power, and has no execution time limit. Startup follows the native [launchd](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html) and [Task Scheduler](https://learn.microsoft.com/en-us/powershell/module/scheduledtasks/new-scheduledtasksettingsset) settings.
+
+#### Starting before login
+
+By default, all three platforms start at **login**, not before it. On Linux, to start at boot before logging in and keep running after logging out, enable lingering once:
+
+```sh
+loginctl enable-linger "$USER"
+```
+
+Your system may request administrator authentication. Lingering affects your entire user service manager, not just Cairn. To undo it, use `loginctl disable-linger "$USER"`; Cairn will then start at login when its service is enabled. Cairn does not enable lingering automatically. On macOS and Windows, these commands install only a login agent/task; starting before login is not implemented. Nothing runs while the machine is shut down or suspended.
+
+#### Configuration and updates
+
+For a different port or database:
+
+```sh
+cairn service install --port 4318 --db /absolute/path/to/cairn.sqlite
+```
+
+On Windows, use a Windows path, for example `cairn service install --port 4318 --db "C:\Users\Alice\Cairn Data\cairn.sqlite"`.
+
+Installation saves the absolute paths to the current Node executable, Cairn CLI, and selected database. The database is selected using `--db`, then `CAIRN_DB`, then the normal XDG data directory. Relative database paths are resolved at installation time. Later changes to shell environment variables do not change the installed service. Re-running `install` replaces its settings and restarts it; pass your custom options again.
+
+Keep the Cairn installation directory and Node executable available. `npm link` points at this checkout; it does not create an independent copy. After moving the installation or changing the Node executable location, run `npm link` and `cairn service install` again. After updating the source, run `npm run build`, then `cairn service stop` and `cairn service start` to load the new build without changing saved settings.
+
+Installation does not change your repository. It refuses to overwrite a unit, plist, or task that was not created by Cairn.
+
+#### Troubleshooting
+
+Run `cairn service status`. An `active` value of `active` with `startup` set to `enabled` means the manager reports a running process and automatic startup is enabled. This is not an HTTP health check. Windows starts tasks asynchronously; an immediate status may show `Ready` or `Queued`, so check again after a moment. Windows also reports the native `lastExitCode` ([`267009`/`0x41301` means the task is currently running](https://learn.microsoft.com/en-us/windows/win32/taskschd/task-scheduler-error-and-success-constants)).
+
+| System | Logs |
+| --- | --- |
+| Linux | `journalctl --user -u cairn.service -n 50 --no-pager` |
+| macOS | `~/Library/Logs/Cairn/viewer.log` and `viewer.error.log` |
+| Windows | `%USERPROFILE%\.cairn\logs\viewer.log` and `viewer.error.log`; also inspect the task in Task Scheduler |
+
+The macOS and Windows log files are appended and are not automatically rotated. If the viewer fails to start, check the logs for an occupied port, missing installation files, or database permissions. Stop any manually running viewer or install on another port. On Linux without systemd or another unsupported platform, use `cairn serve`.
+
+### Use Cairn in another repository
+
 For another repository:
 
 ```sh
@@ -35,9 +104,13 @@ Replace placeholder IDs with the IDs returned by create commands. Use `--project
 
 ## Connect your agent and Matt Pocock's skills
 
-1. Install the bundled `skills/cairn` directory in your agent's skills location. For Codex, link or copy it to `~/.codex/skills/cairn`. Reload the agent session to discover newly installed skills.
-2. In a repository's Matt Pocock setup, choose **Other** as the tracker. Describe Cairn's CLI workflow using [the tracker instructions](docs/agents/issue-tracker.md) and [the skill](skills/cairn/SKILL.md).
-3. Ensure the repository's `AGENTS.md` or `CLAUDE.md` points to its tracker instructions. Apply this per repository; registering a repository in Cairn does not edit its agent instructions automatically.
+Use the [standalone setup guide](docs/integrations/matt-pocock.md) as the reference for `setup-matt-pocock-skills`. It includes a ready-to-use setup prompt and the complete tracker workflow; **the Cairn skill is optional**.
+
+1. Install the Cairn CLI and register the target repository with `cairn project add .`.
+2. Run Matt's setup in that repository, choose **Other**, and provide the guide. Have setup copy its tracker instructions into the destination's `docs/agents/issue-tracker.md` so agents do not depend on a path to your Cairn checkout.
+3. Ensure the repository's `AGENTS.md` or `CLAUDE.md` links to those instructions. The guide includes checks to verify the setup. Registering a repository in Cairn does not edit its agent instructions automatically.
+
+For agents that use standalone skills, the bundled [Cairn skill](skills/cairn/SKILL.md) remains an optional alternative. Install it in your agent's supported skill location; it is not required by Matt's tracker configuration. The CLI works without running the web viewer or installing the background service.
 
 The current upstream [`to-spec`](https://github.com/mattpocock/skills/blob/main/skills/engineering/to-spec/SKILL.md) and [`to-tickets`](https://github.com/mattpocock/skills/blob/main/skills/engineering/to-tickets/SKILL.md) read the configured tracker. Their synthesis, templates, and review steps stay with those skills; Cairn supplies storage and relationships. If using older skills that explicitly require GitHub, update or adapt that tracker instruction first.
 
@@ -77,4 +150,4 @@ npm run build
 npm run dev
 ```
 
-`src/store.ts` owns persistence and domain rules, `src/repo.ts` resolves repository identity, `src/cli.ts` handles agent commands, and `src/server.ts` serves the viewer in `web/`. Runtime dependencies are limited to Markdown parsing and HTML sanitization. Tests use temporary repositories and databases and exercise behavior across the store, CLI, and HTTP boundaries. CI runs on Node 24 and 26.
+`src/store.ts` owns persistence and domain rules, `src/repo.ts` resolves repository identity, `src/cli.ts` handles agent commands, and `src/server.ts` serves the viewer in `web/`. Runtime dependencies are limited to Markdown parsing and HTML sanitization. Tests use temporary repositories and databases and exercise behavior across the store, CLI, and HTTP boundaries. CI runs the full suite on Linux with Node 24 and 26, plus service tests on macOS and Windows with Node 24. Service tests isolate manager changes; macOS validates the generated plist with `plutil`, and Windows executes PowerShell and native task object constructors with scheduler reads/writes replaced. They do not perform real installation, reboot, or login tests.
