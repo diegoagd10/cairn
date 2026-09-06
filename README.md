@@ -2,7 +2,7 @@
 
 **Personal specs and tickets for every repository.** Pronounced “kern.”
 
-A quiet place for your development plans. Specs describe the destination; tickets mark the steps. Cairn keeps them in a local SQLite database, separate from your team's GitHub Issues, and gives your coding agent a JSON CLI and you a read-only web viewer.
+A quiet place for your development plans. Specs describe the destination; tickets mark the steps. Cairn keeps them in a local SQLite database, separate from your team's GitHub Issues, and gives your coding agent a JSON CLI and you a local web viewer with document editing.
 
 ## Start
 
@@ -95,7 +95,6 @@ cairn spec create --title "Offline search" --body-file /tmp/spec.md
 cairn ticket create --title "Search saved notes" --parent SPEC-ID --body-file /tmp/ticket.md
 cairn next
 cairn doc get TKT-ID
-cairn doc status TKT-ID in-progress
 cairn comment add TKT-ID --body-file /tmp/verification.md
 cairn doc status TKT-ID done
 ```
@@ -120,12 +119,12 @@ Compatibility is through the configured tracker contract, with tested CLI operat
 
 - Repository registration, stable document IDs, specs, tickets, Markdown bodies, and comments.
 - Spec-to-ticket relationships and a dependency graph that rejects cycles and cross-project references.
-- Lifecycle statuses plus separate triage labels. A blocked ticket cannot start or finish. Parent specs close explicitly after their tickets reach terminal states.
+- Two lifecycle statuses: `ready-for-agent` and `done`. A blocked ticket cannot finish. Parent specs close explicitly after all their tickets are done. Legacy labels remain stored as metadata.
 - Ready-ticket discovery, revision checks for document edits, JSON project export, original Markdown export, and SQLite backup.
-- A responsive viewer with project navigation, search by title/ID, status filters, progress, Markdown, notes, relationships, and Markdown downloads.
+- A responsive viewer with a collapsible repository sidebar, saved light/dark preference, search by title/ID, status filters, progress, Markdown, notes, relationships, and Markdown downloads. Specs and tickets default to Ready for agent; choose Done or All statuses to include completed work. Documents open across the full content width and support title, Markdown, and status edits.
 - Common Git directory resolution for worktrees and normalized `origin` identity for separate clones. Remote credentials are not stored. Re-register after changing `origin`; renames can require explicit project selection when identities conflict.
 
-The CLI is the agent interface in v0.1. MCP and a TUI are future extensions of the same store, not implemented interfaces. This is a personal, single-machine tool: there is no cloud sync, authentication service, GitHub Issues sync, browser editing, or atomic multi-agent work claiming. Text search currently covers titles and IDs. Marking a ticket done records your/your agent's verification; Cairn does not execute or judge acceptance criteria.
+The CLI is the agent interface in v0.1. MCP and a TUI are future extensions of the same store, not implemented interfaces. This is a personal, single-machine tool: there is no cloud sync, authentication service, GitHub Issues sync, or atomic multi-agent work claiming. Text search currently covers titles and IDs. Marking a ticket done records your/your agent's verification; Cairn does not execute or judge acceptance criteria.
 
 ## Data and backup
 
@@ -139,7 +138,9 @@ cairn --db /path/to/cairn-backup.sqlite project list
 
 Both file-writing commands refuse to overwrite existing files. The SQLite backup API captures a consistent database including WAL changes. Store backups somewhere safe; local does not mean backed up. JSON is a portable archive; importing JSON is not implemented. To restore, stop running Cairn processes and launch with `--db` pointing at a copy of your SQLite backup.
 
-The viewer binds to `127.0.0.1`, checks Host and Origin, and exposes only GET routes. Markdown is sanitized, external images are omitted, and a restrictive content security policy is applied. Other processes running as your local user can still access your data. Keep the server on loopback.
+The viewer binds to `127.0.0.1` and checks Host and Origin. Reads use GET; title, Markdown, and status edits use same-origin JSON POST requests with revision checks. Conflicting edits preserve the draft for review. Markdown is sanitized, external images are omitted, and a restrictive content security policy is applied. Other processes running as your local user can still access your data. Keep the server on loopback.
+
+Existing v1 databases migrate automatically to the two-status schema. Done documents stay done; other statuses become ready-for-agent. A done spec with unfinished tickets reopens. Markdown, relationships, labels, and comments are preserved. Back up before upgrading; older Cairn versions cannot open the migrated database.
 
 ## Development
 

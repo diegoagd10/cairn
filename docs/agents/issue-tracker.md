@@ -6,4 +6,4 @@ Read the [tracker workflow in the integration guide](../integrations/matt-pocock
 
 For Matt Pocock's `/setup-matt-pocock-skills`, this is an **Other** issue tracker. `/to-spec` publishes a Cairn spec. `/to-tickets` publishes Cairn tickets with a spec parent and structured blocking edges. Retain those skills' document templates and review process.
 
-The default label vocabulary is in `triage-labels.md`. Lifecycle states (`todo`, `in-progress`, `done`, `cancelled`) are independent of labels. A cancelled blocker remains unresolved until its edge is explicitly removed or the blocker is completed.
+Lifecycle states are `ready-for-agent` and `done`. Legacy labels remain stored as metadata; they do not control readiness. `cairn next` returns ready-for-agent tickets whose blockers are complete. See `triage-labels.md` for the legacy label vocabulary.

@@ -19,13 +19,13 @@ Write the complete Markdown body to a temporary file, then use `cairn spec creat
 
 For a breakdown from an existing spec, pass `--parent SPEC-ID` on each ticket. Publish blockers first, collect their returned IDs, then pass `--blocked-by ID,ID` on dependent tickets. Keep the original acceptance criteria in the body. Blockers are structured relationships; set them with the flag even if the Markdown also names them. Publish one document per ticket. A batch can partially succeed: inspect existing tickets before retrying to avoid duplicates.
 
-The default triage label is `ready-for-agent`; use `--label` for the repository's vocabulary. Lifecycle status is separate from triage labels. Creating tickets leaves the parent spec unchanged. Read back the created documents and verify each parent, body, and blocker against the approved breakdown before reporting publication complete. Store planning documents in Cairn; GitHub remains the code remote.
+New documents have `ready-for-agent` status. Legacy labels remain metadata and do not affect readiness. Creating tickets leaves the parent spec unchanged. Read back the created documents and verify each parent, body, and blocker against the approved breakdown before reporting publication complete. Store planning documents in Cairn; GitHub remains the code remote.
 
 ## Read and implement
 
-Use `cairn doc get ID` to read the full body, comments, status, revision, and blockers. Use `cairn next` for todo tickets with `ready-for-agent` and no unfinished blockers. Read the parent spec and selected ticket before implementation. `next` lists candidates; it does not claim work atomically.
+Use `cairn doc get ID` to read the full body, comments, status, revision, and blockers. Use `cairn next` for tickets with `ready-for-agent` status and no unfinished blockers. Read the parent spec and selected ticket before implementation. `next` lists candidates; it does not claim work atomically.
 
-Move a chosen ticket with `cairn doc status ID in-progress`. Complete implementation and verify its acceptance criteria, then record useful evidence with `cairn comment add ID --body-file PATH` and mark it `done`. Cairn enforces dependency completion; the agent verifies the acceptance criteria. Close a spec explicitly only after checking its overall outcome.
+Keep the ticket `ready-for-agent` during implementation. Complete implementation and verify its acceptance criteria, then record useful evidence with `cairn comment add ID --body-file PATH` and mark it `done`. Cairn enforces dependency completion; the agent verifies the acceptance criteria. Close a spec explicitly only after checking its overall outcome.
 
 ## Revise documents
 
