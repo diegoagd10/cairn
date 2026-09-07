@@ -4,6 +4,7 @@
   "private": true,
   "description": "Personal specs and tickets for every repository",
   "type": "module",
+  "packageManager": "pnpm@11.3.0",
   "engines": {
     "node": ">=24.14.0"
   },
@@ -14,8 +15,15 @@
     "build": "tsc",
     "check": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
+    "verify:deep": "pnpm run check && pnpm test && pnpm run build",
+    "test:deployment": "pnpm run build && node --test test/deployment.smoke.ts",
+    "pr:check": "node scripts/pr.mjs check",
+    "pr:create": "node scripts/pr.mjs create",
+    "hooks:install": "node scripts/install-hooks.mjs",
+    "hook:commit": "node scripts/git-hooks.mjs commit",
+    "hook:push": "node scripts/git-hooks.mjs push",
     "dev": "node src/cli.ts serve",
-    "prepare": "npm run build"
+    "prepare": "npm run build && node scripts/install-hooks.mjs --if-repository"
   },
   "dependencies": {
     "marked": "^18.0.11",

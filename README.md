@@ -145,10 +145,45 @@ Existing v1 databases migrate automatically to the two-status schema. Done docum
 ## Development
 
 ```sh
-npm run check
-npm test
-npm run build
-npm run dev
+pnpm install --frozen-lockfile
+pnpm verify:deep
+pnpm test:deployment
+pnpm dev
 ```
 
-`src/store.ts` owns persistence and domain rules, `src/repo.ts` resolves repository identity, `src/cli.ts` handles agent commands, and `src/server.ts` serves the viewer in `web/`. Runtime dependencies are limited to Markdown parsing and HTML sanitization. Tests use temporary repositories and databases and exercise behavior across the store, CLI, and HTTP boundaries. CI runs the full suite on Linux with Node 24 and 26, plus service tests on macOS and Windows with Node 24. Service tests isolate manager changes; macOS validates the generated plist with `plutil`, and Windows executes PowerShell and native task object constructors with scheduler reads/writes replaced. They do not perform real installation, reboot, or login tests.
+Use the pnpm version pinned in `package.json`. When changing dependencies, update both `pnpm-lock.yaml` and `package-lock.json` so the npm installation instructions remain reproducible.
+
+`src/store.ts` owns persistence and domain rules, `src/repo.ts` resolves repository identity, `src/cli.ts` handles agent commands, and `src/server.ts` serves the viewer in `web/`. Runtime dependencies are limited to Markdown parsing and HTML sanitization. Tests use temporary repositories and databases and exercise behavior across the store, CLI, and HTTP boundaries.
+
+`verify:deep` runs TypeScript checking, the full test suite, and the build. `test:deployment` builds and checks an isolated installation containing the compiled application, web assets, and production dependencies installed from the frozen pnpm lockfile. It exercises the compiled CLI, SQLite persistence, HTTP assets, and sanitized Markdown without using the user's database or installing a background service.
+
+Checks run locally on the current Node version and OS. Service tests isolate manager changes; on macOS they validate the generated plist with `plutil`, and on Windows they execute PowerShell and native task object constructors with scheduler reads/writes replaced. They do not perform real installation, reboot, or login tests. Local checks do not reproduce the previous GitHub Actions matrix across Node versions and operating systems.
+
+### Before creating a PR
+
+GitHub Actions have been removed. Dependency installation enables the versioned hooks via `core.hooksPath=.githooks`; run `pnpm hooks:install` to enable them in an existing checkout or after installing with lifecycle scripts disabled. Installation preserves existing custom hooks by refusing to replace them. Git configuration is local to the clone and shared by its worktrees; each checkout needs the versioned `.githooks` files.
+
+On a feature branch:
+
+```sh
+git add <files>
+git commit -m "Describe the change"
+git push -u origin HEAD
+pnpm pr:create --fill
+```
+
+`pre-commit` exports the exact staged index to a temporary repository, installs dependencies with the frozen lockfile and lifecycle scripts disabled, and runs `verify:deep` and `test:deployment`. Unstaged and untracked files stay untouched; unstaged fixes cannot hide broken staged code. This also handles the temporary index used by `git commit --only`. A failure rejects the commit and streams the failing command's output to the caller, including coding agents. The temporary directory is removed afterwards. These checks may take time because both suites run on every commit.
+
+`pre-push` reruns `pnpm pr:check` and rejects the push if it fails. It checks the ref updates Git actually intends to send and only permits publishing the current commit to the same branch on `origin`, one branch per push. Other branches, renamed destinations, and tags are rejected. Ref deletions do not publish code and skip checks. The resulting summary is associated with the commit SHA; a pre-commit check alone cannot create that approval because the commit does not exist yet.
+
+On failure, read the output, fix the code, stage the correction, and retry the commit or push. Agents must not use `--no-verify` or disable the hooks to get past a failure.
+
+`pr:check` requires a clean checkout, rejects detached HEAD and `main`, `master`, or the known `origin/HEAD` default branch, and prints the branch and full commit SHA. It runs `verify:deep` followed by `test:deployment`, stopping on failure, and checks that the branch, commit, origin, and clean state still match after each command.
+
+The JSON summary is stored at `<common Git directory>/cairn/pr-checks/<commit SHA>.json`, outside versioned files and shared by worktrees. It records the branch, SHA, origin, Node version, OS, timestamps, command exit codes, durations, and overall result. A rerun invalidates the previous result before starting; failed or interrupted checks cannot authorize a PR.
+
+`pr:create` requires a passing summary for the current clean branch and commit and verifies that the branch on `origin` points to that exact SHA before invoking GitHub CLI. It needs an authenticated `gh` installation and access to the remote. A new commit, amended commit, different branch, or changed origin requires another `pr:check`; an unpublished commit must be pushed first. The command does not push automatically.
+
+Supported PR options are `--title`, `--body`, `--body-file`, `--base`, `--draft`, `--fill`, `--fill-first`, and `--fill-verbose`. Pass them directly, for example `pnpm pr:create --title "Fix viewer" --body-file /tmp/pr.md`. The head branch and repository are fixed by the checked state.
+
+This is a local workflow gate. Git hooks can be disabled and direct use of GitHub or `gh pr create` can bypass PR creation checks; the repository's agent instructions prohibit those bypasses. It does not provide a GitHub branch-protection rule. Later commits pushed to an existing PR run the pre-push checks again.
