@@ -67,6 +67,7 @@ function parse() {
         label: { type: "string" },
         revision: { type: "string" },
         port: { type: "string" },
+        development: { type: "boolean" },
         output: { type: "string" },
       },
     });
@@ -131,12 +132,14 @@ if (values.help || !command) {
     } else {
       store = new Store(values.db);
       if (command === "serve") {
-        options(["port"]);
+        options(["port", "development"]);
         if (action) throw new Error("serve takes no positional arguments.");
         const port = Number(values.port || 4317);
         if (!Number.isInteger(port) || port < 1 || port > 65535)
           throw new Error("Port must be between 1 and 65535.");
-        const server = serve(store);
+        const server = serve(store, {
+          allowBrowserAnnotations: values.development === true,
+        });
         await new Promise<void>((resolve, reject) => {
           server.once("error", reject);
           server.listen(port, "127.0.0.1", resolve);

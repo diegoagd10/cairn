@@ -394,6 +394,10 @@ test("HTTP viewer renders sanitized Markdown, reads fresh data, isolates project
     response.headers.get("content-security-policy")!,
     /frame-ancestors 'none'/,
   );
+  assert.doesNotMatch(
+    response.headers.get("content-security-policy")!,
+    /style-src[^;]*'unsafe-inline'/,
+  );
   const doc = await response.json();
   assert.match(doc.html, /<h1>Safe heading<\/h1>/);
   assert.doesNotMatch(doc.html, /<script|<img|javascript:|autofocus|onfocus/);
@@ -435,6 +439,24 @@ test("HTTP viewer renders sanitized Markdown, reads fresh data, isolates project
   assert.equal(rebound, 403);
   assert.equal((await fetch(`${base}/not-an-asset`)).status, 404);
   assert.match(await (await fetch(base)).text(), /Your path, mapped/);
+
+  const developmentServer = serve(store, { allowBrowserAnnotations: true });
+  developmentServer.listen(0, "127.0.0.1");
+  await once(developmentServer, "listening");
+  t.after(() => {
+    developmentServer.closeAllConnections();
+    developmentServer.close();
+  });
+  const developmentBase = `http://127.0.0.1:${(developmentServer.address() as { port: number }).port}`;
+  const developmentResponse = await fetch(developmentBase);
+  assert.match(
+    developmentResponse.headers.get("content-security-policy")!,
+    /style-src 'self' 'unsafe-inline'/,
+  );
+  assert.match(
+    developmentResponse.headers.get("content-security-policy")!,
+    /script-src 'self'/,
+  );
 });
 
 test("HTTP status changes persist, enforce dependencies and reject stale or unsafe writes", async (t) => {

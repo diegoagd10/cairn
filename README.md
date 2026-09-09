@@ -121,7 +121,7 @@ Compatibility is through the configured tracker contract, with tested CLI operat
 - Spec-to-ticket relationships and a dependency graph that rejects cycles and cross-project references.
 - Two lifecycle statuses: `ready-for-agent` and `done`. A blocked ticket cannot finish. Parent specs close explicitly after all their tickets are done. Legacy labels remain stored as metadata.
 - Ready-ticket discovery, revision checks for document edits, JSON project export, original Markdown export, and SQLite backup.
-- A responsive viewer with a collapsible repository sidebar, saved light/dark preference, search by title/ID, status filters, progress, Markdown, notes, relationships, and Markdown downloads. Specs and tickets default to Ready for agent; choose Done or All statuses to include completed work. Documents open across the full content width and support title, Markdown, and status edits.
+- A responsive viewer with persistent desktop repository navigation, a collapsible mobile sidebar, saved light/dark preference, a unified specs-and-tickets list, search and filters, progress, Markdown, notes, relationships, and Markdown downloads. Documents open across the full content width and support title, Markdown, and status edits.
 - Common Git directory resolution for worktrees and normalized `origin` identity for separate clones. Remote credentials are not stored. Re-register after changing `origin`; renames can require explicit project selection when identities conflict.
 
 The CLI is the agent interface in v0.1. MCP and a TUI are future extensions of the same store, not implemented interfaces. This is a personal, single-machine tool: there is no cloud sync, authentication service, GitHub Issues sync, or atomic multi-agent work claiming. Text search currently covers titles and IDs. Marking a ticket done records your/your agent's verification; Cairn does not execute or judge acceptance criteria.
@@ -150,6 +150,8 @@ pnpm verify:deep
 pnpm test:deployment
 pnpm dev
 ```
+
+The development server relaxes only the inline-style part of the content security policy so Codex browser annotations can draw their review overlay. Installed and background viewers keep the stricter production policy.
 
 Use the pnpm version pinned in `package.json`. When changing dependencies, update both `pnpm-lock.yaml` and `package-lock.json` so the npm installation instructions remain reproducible.
 

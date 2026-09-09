@@ -55,7 +55,10 @@ export function markdown(body: string): string {
   });
 }
 
-export function serve(store: Store) {
+export function serve(
+  store: Store,
+  options: { allowBrowserAnnotations?: boolean } = {},
+) {
   const assets = new Map([
     ["/", { type: "text/html; charset=utf-8", file: "index.html" }],
     ["/app.js", { type: "text/javascript; charset=utf-8", file: "app.js" }],
@@ -68,7 +71,7 @@ export function serve(store: Store) {
     res.setHeader("Referrer-Policy", "no-referrer");
     res.setHeader(
       "Content-Security-Policy",
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+      `default-src 'self'; script-src 'self'; style-src 'self'${options.allowBrowserAnnotations ? " 'unsafe-inline'" : ""}; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`,
     );
     const send = (status: number, value: unknown) => {
       res.writeHead(status, {

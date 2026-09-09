@@ -44,7 +44,7 @@ const state = {
   docs: [],
   selected: null,
   detail: null,
-  kind: "spec",
+  kind: "all",
   query: "",
   filter: defaultStatus,
   savingStatus: false,
@@ -72,6 +72,65 @@ const ready = (doc) =>
   !doc.unresolved.length;
 const tickets = (spec) =>
   state.docs.filter((d) => d.kind === "ticket" && d.parent_id === spec.id);
+async function copyText(value) {
+  const helper = document.createElement("textarea");
+  helper.className = "clipboard-helper";
+  helper.value = value;
+  helper.setAttribute("readonly", "");
+  document.body.append(helper);
+  helper.select();
+  const copied = document.execCommand("copy");
+  helper.remove();
+  if (copied) return;
+  if (!navigator.clipboard) throw new Error("Clipboard access is unavailable.");
+  await navigator.clipboard.writeText(value);
+}
+const copyButton = (id) =>
+  `<button class="copy-id" type="button" data-copy-id="${escape(id)}" aria-label="Copy ${escape(id)}" title="Copy ${escape(id)}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button>`;
+const detailId = (doc) =>
+  `<div class="detail-id-row"><span class="detail-id-label">${doc.kind === "spec" ? "Spec" : "Ticket"} ID</span><code class="detail-doc-id">${escape(doc.id)}</code>${copyButton(doc.id)}</div>`;
+const parentSpec = (doc) =>
+  doc?.kind === "ticket" && doc.parent_id
+    ? state.docs.find(
+        (candidate) => candidate.kind === "spec" && candidate.id === doc.parent_id,
+      )
+    : null;
+const detailBackButton = (doc) =>
+  `<button class="text-button" id="close-detail">${parentSpec(doc) ? "← Back to parent spec" : "← Back to list"}</button>`;
+function bindCopyButtons(root) {
+  for (const button of root.querySelectorAll("[data-copy-id]"))
+    button.addEventListener("click", async () => {
+      const id = button.dataset.copyId;
+      try {
+        await copyText(id);
+        button.dataset.feedback = "Copied";
+        button.setAttribute("aria-label", `${id} copied`);
+      } catch {
+        button.dataset.feedback = "Copy failed";
+      }
+      setTimeout(() => {
+        delete button.dataset.feedback;
+        button.setAttribute("aria-label", `Copy ${id}`);
+      }, 1500);
+    });
+}
+const createdAt = (doc) => new Date(doc.created_at).getTime();
+function compareDocuments(a, b) {
+  const parent = (doc) =>
+    doc.kind === "ticket" && doc.parent_id
+      ? state.docs.find((candidate) => candidate.id === doc.parent_id) || doc
+      : doc;
+  const aParent = parent(a);
+  const bParent = parent(b);
+  const groupOrder = createdAt(bParent) - createdAt(aParent);
+  if (groupOrder) return groupOrder;
+  if (aParent.id === bParent.id) {
+    if (a.id === aParent.id) return -1;
+    if (b.id === bParent.id) return 1;
+    return createdAt(a) - createdAt(b) || a.id.localeCompare(b.id);
+  }
+  return createdAt(b) - createdAt(a) || b.id.localeCompare(a.id);
+}
 async function api(path, options) {
   const response = await fetch(path, options);
   const value = await response.json();
@@ -102,61 +161,36 @@ function renderOverview() {
     : "Workspace";
   $("#heading").textContent = state.project
     ? state.project.name
-    : "Your path, mapped.";
+    : "Your workspace";
   $("#subtitle").textContent = state.project
-    ? "A clear destination. A thoughtful path to get there."
-    : "Specs set the destination. Tickets show the way.";
-  const specs = state.docs.filter((d) => d.kind === "spec");
-  const allTickets = state.docs.filter((d) => d.kind === "ticket");
-  const done = allTickets.filter((d) => d.status === "done").length;
-  const blocked = allTickets.filter(
-    (d) => d.status === "ready-for-agent" && d.unresolved.length,
-  ).length;
-  const stats = [
-    ["Specs", specs.length, "Destinations defined"],
-    ["Ready to start", allTickets.filter(ready).length, "Your next steps"],
-    ["Waiting on dependencies", blocked, "Finish their blockers first"],
-    [
-      "Completed",
-      `${done}<small>/ ${allTickets.length}</small>`,
-      "Steps behind you",
-    ],
-  ];
-  $("#stats").innerHTML = stats
-    .map(
-      ([label, value, note]) =>
-        `<div class="stat"><span class="stat-label">${label}</span><span class="stat-number">${value}</span><div class="stat-bottom">${note}</div></div>`,
-    )
-    .join("");
-  $("#spec-count").textContent = specs.length;
-  $("#ticket-count").textContent = allTickets.length;
+    ? "Plans and actionable work in one place."
+    : "Specs and tickets, together.";
+  $("#document-count").textContent = state.docs.length;
 }
 function renderList() {
-  for (const button of document.querySelectorAll("[data-kind]")) {
-    button.setAttribute(
-      "aria-selected",
-      String(button.dataset.kind === state.kind),
-    );
-    button.tabIndex = button.dataset.kind === state.kind ? 0 : -1;
-  }
   const docs = state.docs
-    .filter((d) => d.kind === state.kind)
+    .filter((d) => state.kind === "all" || d.kind === state.kind)
     .filter((d) =>
       `${d.title} ${d.id}`.toLowerCase().includes(state.query.toLowerCase()),
     )
-    .filter((d) => state.filter === "all" || d.status === state.filter);
+    .filter((d) => state.filter === "all" || d.status === state.filter)
+    .sort(compareDocuments);
+  $("#documents").className = docs.length ? "issue-list" : "";
   if (!docs.length) {
-    const filtered = state.query || state.filter !== "all";
+    const filtered =
+      state.query || state.kind !== "all" || state.filter !== "all";
     const filterAction =
-      state.query || state.filter !== defaultStatus
+      filtered
         ? '<button class="text-button" id="clear-filters">Reset filters</button>'
-        : '<p>Choose Done or All statuses in the Status dropdown to view completed documents.</p>';
+        : "";
     $("#documents").innerHTML =
-      `<div class="empty"><span class="empty-symbol" aria-hidden="true">◇</span><h2>${!state.project ? "Every path starts somewhere." : filtered ? "A quieter stretch of trail." : state.kind === "spec" ? "Start with a destination." : "Make room for your next step."}</h2><p>${!state.project ? "Register a repository to give its plans a home." : filtered ? "No documents match your search and filters." : state.kind === "spec" ? "Create a spec with your agent, then explore it here." : "Break a spec into tickets with your agent. They’ll appear here."}</p>${filtered && state.project ? filterAction : `<code>${!state.project ? "cairn project add /path/to/repo" : `cairn ${state.kind} create --title &quot;Your ${state.kind}&quot; --body-file /tmp/${state.kind}.md`}</code>`}</div>`;
+      `<div class="empty"><span class="empty-symbol" aria-hidden="true">◇</span><h2>${!state.project ? "Every path starts somewhere." : filtered ? "No matching work." : "No work items yet."}</h2><p>${!state.project ? "Register a repository to give its plans a home." : filtered ? "No specs or tickets match your current filters." : "Create a spec or ticket with your agent and it will appear here."}</p>${filtered && state.project ? filterAction : `<code>${!state.project ? "cairn project add /path/to/repo" : 'cairn spec create --title &quot;Your plan&quot; --body-file /tmp/spec.md'}</code>`}</div>`;
     $("#clear-filters")?.addEventListener("click", () => {
       state.query = "";
+      state.kind = "all";
       state.filter = defaultStatus;
       $("#search").value = "";
+      $("#kind").value = "all";
       $("#status").value = defaultStatus;
       renderList();
     });
@@ -173,18 +207,17 @@ function renderList() {
             ? `${d.unresolved.length} unfinished ${d.unresolved.length === 1 ? "blocker" : "blockers"}`
             : ready(d)
               ? "Ready for your next session"
-              : d.parent_id || "Standalone ticket";
+              : d.parent_id
+                ? `In ${state.docs.find((item) => item.id === d.parent_id)?.title || d.parent_id}`
+                : "Standalone ticket";
       const plain = d.excerpt
         .replace(/[#*`>\[\]]/g, "")
         .replace(/\s+/g, " ")
         .trim();
-      return `<button class="document-card ${d.id === state.selected ? "selected" : ""}" data-document="${escape(d.id)}" aria-label="${escape(d.title)}"><div class="card-top"><span class="doc-id">${escape(d.id)}</span>${badge(d)}</div><h3 class="card-title">${escape(d.title)}</h3><p class="card-excerpt">${escape(plain)}</p><div class="card-bottom"><span>${escape(summary)}</span><span>${date(d.updated_at)} <span class="arrow" aria-hidden="true">↗</span></span></div>${children.length ? `<div class="progress-track"><progress value="${done}" max="${children.length}" aria-label="Completed tickets"></progress></div>` : ""}</button>`;
+      return `<div class="document-card ${d.kind}-row ${d.parent_id ? "has-parent" : ""} ${d.id === state.selected ? "selected" : ""}"><a class="document-link" data-document="${escape(d.id)}" href="${href(state.project.id, d.id)}" aria-label="Open ${escape(d.title)}"><span class="kind-icon ${escape(d.kind)}" aria-hidden="true">${d.kind === "spec" ? "◆" : "○"}</span><span class="card-content"><span class="card-top"><span class="card-title-line"><span class="card-title">${escape(d.title)}</span><span class="kind-badge">${d.kind === "spec" ? "Spec" : "Ticket"}</span>${badge(d)}</span></span><span class="card-excerpt">${escape(plain)}</span><span class="card-bottom"><span>${escape(summary)}</span><span>Created ${date(d.created_at)}</span></span>${children.length ? `<span class="progress-track"><progress value="${done}" max="${children.length}" aria-label="Completed tickets"></progress></span>` : ""}</span><span class="arrow" aria-hidden="true">›</span></a><span class="card-id-actions"><span class="doc-id">${escape(d.id)}</span>${copyButton(d.id)}</span></div>`;
     })
     .join("");
-  for (const button of document.querySelectorAll("[data-document]"))
-    button.addEventListener("click", () => {
-      location.hash = href(state.project.id, button.dataset.document);
-    });
+  bindCopyButtons($("#documents"));
 }
 function related(ids) {
   return ids
@@ -201,8 +234,8 @@ function renderEditor(draft, key) {
   panel.hidden = false;
   // Background refreshes may update the list, but leave this editor intact.
   if (panel.querySelector("#document-editor")?.dataset.key === key) return;
-  panel.innerHTML = `<div class="detail-toolbar"><button class="text-button" id="close-detail">← Back to list</button><span class="status-note">Draft · not saved</span></div>
-    <span class="doc-id">${escape(draft.id)}</span><h2>Edit ${escape(draft.kind)}</h2>
+  panel.innerHTML = `<div class="detail-toolbar">${detailBackButton(draft)}<span class="status-note">Draft · not saved</span></div>
+    ${detailId(draft)}<h2>Edit ${escape(draft.kind)}</h2>
     <form id="document-editor">
       <label for="edit-title">Title</label>
       <input id="edit-title" name="title" required />
@@ -221,6 +254,7 @@ function renderEditor(draft, key) {
   };
   showDraftFeedback();
   const form = $("#document-editor");
+  bindCopyButtons(panel);
   form.dataset.key = key;
   $("#edit-title").value = draft.title;
   $("#edit-body").value = draft.body;
@@ -228,7 +262,7 @@ function renderEditor(draft, key) {
     $(`#edit-${field}`).addEventListener("input", (event) => {
       draft[field] = event.target.value;
     });
-  $("#close-detail").addEventListener("click", closeDetail);
+  $("#close-detail").addEventListener("click", () => closeDetail(draft));
   $("#cancel-edit").addEventListener("click", async () => {
     drafts.delete(key);
     renderDetail();
@@ -330,9 +364,10 @@ function renderDetail() {
   }
   const scroll = panel.scrollTop;
   panel.hidden = false;
-  panel.innerHTML = `<div class="detail-toolbar"><button class="text-button" id="close-detail">← Back to list</button><div class="detail-actions"><button class="text-button" id="edit-document">Edit</button><button class="text-button" id="download">↓ Markdown</button></div></div><span class="doc-id">${escape(d.id)}</span><h2>${escape(d.title)}</h2><div class="detail-meta">${badge(d)}<span>Updated ${date(d.updated_at)}</span></div><div class="status-controls"><button id="change-status" class="status-button">${d.status === "done" ? "Mark ready for agent" : "Mark as done"}</button><p id="status-feedback" role="status" hidden></p><p id="status-error" role="alert" hidden></p>${d.unresolved.length ? '<p class="status-note">Finish the dependencies below before marking this ticket done.</p>' : d.kind === "spec" && tickets(d).some((t) => t.status !== "done") ? '<p class="status-note">Finish all tickets in this spec before marking it done.</p>' : ""}</div>${d.parent_id ? `<div class="detail-label">Destination</div>${related([d.parent_id])}` : ""}${d.blockers.length ? `<div class="detail-label">Depends on</div>${related(d.blockers)}` : ""}<article class="markdown">${d.html}</article>${d.kind === "spec" && tickets(d).length ? `<div class="detail-label">The path · ${tickets(d).length} tickets</div>${related(tickets(d).map((t) => t.id))}` : ""}${d.comments.length ? `<div class="detail-label">Notes · ${d.comments.length}</div>${d.comments.map((c) => `<div class="comment"><small>${date(c.created_at)}</small><div class="markdown">${c.html}</div></div>`).join("")}` : ""}`;
+  panel.innerHTML = `<div class="detail-toolbar">${detailBackButton(d)}<div class="detail-actions"><button class="text-button" id="edit-document">Edit</button><button class="text-button" id="download">↓ Markdown</button></div></div>${detailId(d)}<h2>${escape(d.title)}</h2><div class="detail-meta">${badge(d)}<span>Updated ${date(d.updated_at)}</span></div><div class="status-controls"><button id="change-status" class="status-button">${d.status === "done" ? "Mark ready for agent" : "Mark as done"}</button><p id="status-feedback" role="status" hidden></p><p id="status-error" role="alert" hidden></p>${d.unresolved.length ? '<p class="status-note">Finish the dependencies below before marking this ticket done.</p>' : d.kind === "spec" && tickets(d).some((t) => t.status !== "done") ? '<p class="status-note">Finish all tickets in this spec before marking it done.</p>' : ""}</div>${d.parent_id ? `<div class="detail-label">Destination</div>${related([d.parent_id])}` : ""}${d.blockers.length ? `<div class="detail-label">Depends on</div>${related(d.blockers)}` : ""}<article class="markdown">${d.html}</article>${d.kind === "spec" && tickets(d).length ? `<div class="detail-label">The path · ${tickets(d).length} tickets</div>${related(tickets(d).map((t) => t.id))}` : ""}${d.comments.length ? `<div class="detail-label">Notes · ${d.comments.length}</div>${d.comments.map((c) => `<div class="comment"><small>${date(c.created_at)}</small><div class="markdown">${c.html}</div></div>`).join("")}` : ""}`;
   panel.scrollTop = scroll;
-  $("#close-detail").addEventListener("click", closeDetail);
+  bindCopyButtons(panel);
+  $("#close-detail").addEventListener("click", () => closeDetail(d));
   $("#edit-document").addEventListener("click", () => {
     if (state.savingStatus) return;
     drafts.set(key, { ...d });
@@ -399,8 +434,8 @@ function renderDetail() {
       location.hash = href(state.project.id, button.dataset.related);
     });
 }
-function closeDetail() {
-  location.hash = href(state.project.id);
+function closeDetail(doc = state.detail) {
+  location.hash = href(state.project.id, parentSpec(doc)?.id);
 }
 function setSidebarOpen(open) {
   const sidebar = $("#sidebar");
@@ -417,8 +452,10 @@ function setSidebarOpen(open) {
 $("#sidebar-toggle").addEventListener("click", () => {
   setSidebarOpen($("#sidebar").hidden);
 });
+const mobileSidebar = window.matchMedia("(max-width: 800px)");
+mobileSidebar.addEventListener("change", (event) => setSidebarOpen(!event.matches));
 $("#sidebar").addEventListener("click", (event) => {
-  if (event.target.closest("a") && window.matchMedia("(max-width: 800px)").matches)
+  if (event.target.closest("a") && mobileSidebar.matches)
     setSidebarOpen(false);
 });
 async function load({ focus = false } = {}) {
@@ -460,12 +497,13 @@ async function load({ focus = false } = {}) {
     const changedDocument = state.selected !== selected;
     if (changedProject) {
       state.query = "";
+      state.kind = "all";
       state.filter = defaultStatus;
       $("#search").value = "";
+      $("#kind").value = "all";
       $("#status").value = defaultStatus;
     }
     Object.assign(state, { projects, project, docs, selected, detail });
-    if (detail && (changedDocument || changedProject)) state.kind = detail.kind;
     renderProjects();
     renderOverview();
     renderList();
@@ -480,30 +518,27 @@ async function load({ focus = false } = {}) {
     if (request === generation) showError(error);
   }
 }
-for (const button of document.querySelectorAll("[data-kind]")) {
-  button.addEventListener("click", () => {
-    state.kind = button.dataset.kind;
-    renderList();
-  });
-  button.addEventListener("keydown", (event) => {
-    if (["ArrowLeft", "ArrowRight"].includes(event.key)) {
-      event.preventDefault();
-      const next =
-        button.dataset.kind === "spec" ? $("#tab-ticket") : $("#tab-spec");
-      next.click();
-      next.focus();
-    }
-  });
-}
 $("#search").addEventListener("input", (event) => {
   state.query = event.target.value;
+  renderList();
+});
+$("#kind").addEventListener("change", (event) => {
+  state.kind = event.target.value;
   renderList();
 });
 $("#status").addEventListener("change", (event) => {
   state.filter = event.target.value;
   renderList();
 });
-$("#refresh").addEventListener("click", () => load());
+$("#refresh").addEventListener("click", async () => {
+  const button = $("#refresh");
+  button.disabled = true;
+  $("#refresh-label").textContent = "Refreshing…";
+  lastSnapshot = "";
+  await load();
+  button.disabled = false;
+  $("#refresh-label").textContent = "Refresh";
+});
 document.addEventListener("keydown", (event) => {
   if (
     event.key === "/" &&
@@ -514,7 +549,7 @@ document.addEventListener("keydown", (event) => {
     $("#search").focus();
   }
   if (event.key === "Escape") {
-    if (!$("#sidebar").hidden) setSidebarOpen(false);
+    if (mobileSidebar.matches && !$("#sidebar").hidden) setSidebarOpen(false);
     else if (state.detail) closeDetail();
   }
 });
@@ -525,6 +560,7 @@ window.addEventListener("beforeunload", (event) => {
   }
 });
 window.addEventListener("hashchange", () => load({ focus: true }));
+setSidebarOpen(!mobileSidebar.matches);
 await load();
 setInterval(() => {
   if (!document.hidden && !$("#detail").contains(document.activeElement))
