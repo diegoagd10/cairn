@@ -6,6 +6,7 @@ import {
   rmSync,
   readFileSync,
   symlinkSync,
+  existsSync,
 } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -318,6 +319,22 @@ test("backup captures a consistent restorable database and refuses overwrite", a
     backup.close();
   }
   await assert.rejects(store.backup(target), /EEXIST/);
+});
+
+test("removed service commands fail without creating a database", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "cairn-cli-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const database = join(dir, "data", "cairn.sqlite");
+  for (const action of ["install", "start", "stop", "status", "uninstall"]) {
+    const result = spawnSync(process.execPath, [cliPath, "--db", database, "service", action], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Unknown command: service/);
+    assert.equal(existsSync(database), false);
+  }
 });
 
 test("CLI creates through stdin, returns structured data, reads and exports exact Markdown", (t) => {
