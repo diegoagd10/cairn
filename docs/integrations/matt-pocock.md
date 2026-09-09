@@ -1,6 +1,6 @@
 # Configure Matt Pocock's skills to use Cairn
 
-Use this guide as the reference for `setup-matt-pocock-skills` when choosing **Other** as the issue tracker. It contains the complete Cairn workflow; installing the Cairn skill is optional. Matt's skills supply the planning, ticket templates, review, and implementation workflow. Cairn supplies local storage, document IDs, dependencies, and progress.
+Use this guide as the reference for `setup-matt-pocock-skills` when choosing **Other** as the issue tracker. It contains the complete Cairn workflow. Matt's skills supply the planning, ticket templates, review, and implementation workflow. Cairn supplies local storage, document IDs, dependencies, and progress.
 
 ## Prerequisites
 
@@ -21,7 +21,7 @@ cairn project add .
 cairn project resolve
 ```
 
-The agent needs access to the `cairn` command and the local database. The web viewer and background service are optional; the CLI accesses the database directly. On another computer, install Cairn and register the repository there too. Data is local to each computer and is not synchronized by Git.
+The agent needs access to the `cairn` command and the local database. The web viewer is optional; the CLI accesses the database directly. Run `cairn serve` when you want to open the viewer, and stop it with Ctrl+C. On another computer, install Cairn and register the repository there too. Data is local to each computer and is not synchronized by Git.
 
 ## Give this reference to setup
 
@@ -33,18 +33,17 @@ Read /absolute/path/to/cairn/docs/integrations/matt-pocock.md.
 Use its "Tracker instructions to copy" section to write a self-contained
 docs/agents/issue-tracker.md in this repository. Link that file from the
 existing AGENTS.md or CLAUDE.md using your normal setup workflow.
-Do not require installation of the Cairn skill or leave a dependency on
-the path to my Cairn checkout. Preserve existing project instructions
+Do not leave a dependency on the path to my Cairn checkout. Preserve existing project instructions
 and your normal review steps, triage setup, and domain documentation setup.
 ```
 
 On Windows, provide a Windows path to this guide. You can also attach the guide or provide its contents if the agent cannot read the Cairn checkout. Do not copy machine-specific absolute paths into the destination repository's instructions.
 
-The setup skill records the tracker workflow in `docs/agents/issue-tracker.md` and links it from the repository's agent instructions. Merely running `cairn project add` or `cairn service install` does not perform that setup.
+The setup skill records the tracker workflow in `docs/agents/issue-tracker.md` and links it from the repository's agent instructions. Merely running `cairn project add` does not perform that setup.
 
 ## Tracker instructions to copy
 
-Copy this section's contents into the target repository's `docs/agents/issue-tracker.md`. The following instructions are sufficient without a separate Cairn skill.
+Copy this section's contents into the target repository's `docs/agents/issue-tracker.md`.
 
 ### Tracker and project selection
 
@@ -115,7 +114,7 @@ For parallel agents, assign distinct tickets explicitly and give each agent its 
 
 ## Verify the setup
 
-From the target repository, run `cairn project resolve`, `cairn spec list`, `cairn ticket list`, and `cairn next`. Empty lists are valid; no sample tickets are needed. Confirm that the agent instructions link to the destination's tracker document and that the document contains the workflow above without requiring the Cairn skill or an absolute link to your Cairn checkout.
+From the target repository, run `cairn project resolve`, `cairn spec list`, `cairn ticket list`, and `cairn next`. Empty lists are valid; no sample tickets are needed. Confirm that the agent instructions link to the destination's tracker document and that the document contains the workflow above without an absolute link to your Cairn checkout.
 
 For an agent-level check, ask: "Without creating or changing any documents, explain which tracker this repository uses and how you would publish a spec, create dependent tickets, and find the next ready ticket." The answer should use Cairn's CLI and the intended project.
 
