@@ -22,7 +22,7 @@
     "hooks:install": "node scripts/install-hooks.mjs",
     "hook:commit": "node scripts/git-hooks.mjs commit",
     "hook:push": "node scripts/git-hooks.mjs push",
-    "dev": "node src/cli.ts serve",
+    "dev": "node src/cli.ts serve --development",
     "prepare": "npm run build && node scripts/install-hooks.mjs --if-repository"
   },
   "dependencies": {

@@ -64,49 +64,27 @@
           <span id="connection" role="status">Connecting…</span
           ><button
             id="refresh"
-            class="icon-button"
-            aria-label="Refresh workspace"
-            title="Refresh workspace"
+            class="refresh-button"
+            aria-label="Refresh data from the local Cairn database"
+            title="Refresh data from the local Cairn database"
           >
-            ↻
+            <span aria-hidden="true">↻</span><span id="refresh-label">Refresh</span>
           </button>
         </div>
       </header>
       <div id="error" class="error" role="alert" hidden></div>
       <section class="intro">
-        <div>
-          <p class="eyebrow">MAKE THE NEXT STEP CLEAR</p>
-          <h1 id="heading">Your path, mapped.</h1>
-          <p id="subtitle" class="subtitle">
-            Specs set the destination. Tickets show the way.
-          </p>
+        <div class="intro-copy">
+          <h1 id="heading">Your workspace</h1>
+          <p id="subtitle" class="subtitle">Specs and tickets, together.</p>
         </div>
-        <div class="stone-art" aria-hidden="true">
-          <i></i><i></i><i></i><span>ONE STEP AT A TIME</span>
-        </div>
+        <div class="stone-art" aria-hidden="true"><i></i><i></i><i></i></div>
       </section>
-      <section id="stats" class="stats" aria-label="Project progress"></section>
       <section class="work-area">
         <div class="list-pane">
           <div class="list-heading">
-            <div class="tabs" role="tablist" aria-label="Document type">
-              <button
-                role="tab"
-                id="tab-spec"
-                data-kind="spec"
-                aria-selected="true"
-              >
-                Specs <span id="spec-count">0</span></button
-              ><button
-                role="tab"
-                id="tab-ticket"
-                data-kind="ticket"
-                aria-selected="false"
-              >
-                Tickets <span id="ticket-count">0</span>
-              </button>
-            </div>
-            <span class="section-note">THE PLAN &amp; THE PATH</span>
+            <h2 class="list-title">Specs &amp; tickets <span id="document-count">0</span></h2>
+            <span class="section-note">NEWEST SPECS FIRST · TICKETS FOLLOW</span>
           </div>
           <div class="filters">
             <label class="search-label"
@@ -117,6 +95,11 @@
                 placeholder="Find a title or ID…"
                 aria-label="Search documents"
               /><kbd>/</kbd></label
+            ><select id="kind" aria-label="Filter by type">
+              <option value="all" selected>All types</option>
+              <option value="spec">Specs</option>
+              <option value="ticket">Tickets</option>
+            </select
             ><select id="status" aria-label="Filter by status">
               <option value="ready-for-agent" selected>Ready for agent</option>
               <option value="done">Done</option>
