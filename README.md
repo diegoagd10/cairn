@@ -45,6 +45,10 @@ Replace paths with your files and placeholder IDs with the IDs returned by creat
 - Blocked tickets cannot finish. Mark a spec done explicitly after completing all its tickets.
 - Commands resolve the current repository. Outside a checkout, pass `--project NAME_OR_ID`. Worktrees share project identity; clones with the same normalized `origin` resolve to the same project in the database.
 
+In the web viewer, use row checkboxes or **Select all visible** to select specs and tickets, then **Mark done** or **Delete**. Both actions show a confirmation listing every affected item. Changing the search, filters, or project clears the selection.
+
+Bulk completion requires every unfinished blocker and every unfinished ticket under a selected spec to be selected too. Deleting a spec permanently deletes its tickets and their notes, including tickets hidden by filters. Deletion is blocked if a ticket that would remain depends on any ticket being deleted. Each bulk action applies all changes together; invalid dependencies or changes since confirmation cancel the entire action so you can review again.
+
 Run `cairn --help` for all commands. Data commands return JSON; `cairn doc export ID` returns the original Markdown.
 
 For agent setup, follow the [Matt Pocock integration guide](docs/integrations/matt-pocock.md). Registering a project does not configure its agent instructions.

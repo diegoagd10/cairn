@@ -41,7 +41,7 @@ Examples:
   cairn ticket create --parent SPEC-abc12345 --title "Search notes" --body-file /tmp/ticket.md
   cairn next --project cairn
 
-The viewer can edit titles, Markdown and status. Other edits use the CLI. No GitHub Issues are created.
+The viewer can edit titles, Markdown and status, and delete documents in bulk. Other edits use the CLI. No GitHub Issues are created.
 `;
 
 function parse() {

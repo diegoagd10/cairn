@@ -106,6 +106,25 @@
               <option value="all">All statuses</option>
             </select>
           </div>
+          <div class="bulk-toolbar" aria-label="Bulk document actions">
+            <label class="select-all-label"
+              ><input id="select-all" type="checkbox" /> Select all
+              visible</label
+            >
+            <span id="selection-count" role="status">0 selected</span>
+            <button id="bulk-done" class="status-button" type="button" disabled>
+              Mark done
+            </button>
+            <button
+              id="bulk-delete"
+              class="text-button danger-button"
+              type="button"
+              disabled
+            >
+              Delete
+            </button>
+          </div>
+          <p id="bulk-feedback" role="status" hidden></p>
           <div id="documents" aria-live="polite"></div>
         </div>
         <aside
@@ -120,5 +139,20 @@
         ><span>PRIVATE PLANNING, PER REPOSITORY</span>
       </footer>
     </main>
+    <dialog
+      id="bulk-dialog"
+      aria-labelledby="bulk-dialog-title"
+      aria-describedby="bulk-dialog-description"
+    >
+      <h2 id="bulk-dialog-title"></h2>
+      <p id="bulk-dialog-description"></p>
+      <ul id="bulk-dialog-items"></ul>
+      <div class="editor-actions">
+        <button id="bulk-cancel" class="text-button" type="button" autofocus>
+          Cancel
+        </button>
+        <button id="bulk-confirm" class="status-button" type="button"></button>
+      </div>
+    </dialog>
   </body>
 </html>
