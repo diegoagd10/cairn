@@ -44,8 +44,277 @@ function fixture(t: { after: (fn: () => void) => void }) {
       cwd: repo,
       encoding: "utf8",
     });
-  return { dir, repo, path, store, project, create, cli };
+  const select = (...docs: { id: string; revision: number }[]) =>
+    docs.map(({ id, revision }) => ({
+      id,
+      revision,
+      ...(store.get(project.id, id).kind === "spec"
+        ? {
+            tickets: store
+              .list(project.id, "ticket")
+              .filter((ticket) => ticket.parent_id === id)
+              .map(({ id, revision }) => ({ id, revision })),
+          }
+        : {}),
+    }));
+  return { dir, repo, path, store, project, create, cli, select };
 }
+
+test("bulk spec selection cancels when child revisions or membership change before preview", (t) => {
+  const { store, project, create, select } = fixture(t);
+  const spec = store.create(project.id, {
+    kind: "spec",
+    title: "Plan",
+    body: "Original",
+  });
+  const child = create("Child", [], spec.id);
+  const selection = select(spec);
+  store.update(project.id, child.id, { title: "Changed after selection" });
+  assert.throws(
+    () => store.previewBulk(project.id, "delete", selection),
+    /Revision conflict/,
+  );
+  const fresh = select(spec);
+  create("New child", [], spec.id);
+  assert.throws(
+    () => store.previewBulk(project.id, "delete", fresh),
+    /Revision conflict/,
+  );
+  assert.equal(store.list(project.id).length, 3);
+});
+
+test("notes added after selection cancel bulk actions on tickets and their specs", (t) => {
+  const { store, project, create, select } = fixture(t);
+  const spec = store.create(project.id, {
+    kind: "spec",
+    title: "Plan",
+    body: "Original",
+  });
+  const child = create("Child", [], spec.id);
+  const selectedSpec = select(spec);
+  const selectedChild = select(child);
+  const plan = store.previewBulk(project.id, "delete", selectedChild);
+  store.comment(project.id, child.id, "New information to preserve");
+  assert.throws(
+    () => store.previewBulk(project.id, "delete", selectedChild),
+    /Revision conflict/,
+  );
+  assert.throws(
+    () => store.previewBulk(project.id, "delete", selectedSpec),
+    /Revision conflict/,
+  );
+  assert.throws(
+    () => store.applyBulk(project.id, "delete", selectedChild, plan.token),
+    /Revision conflict/,
+  );
+  assert.equal(
+    store.get(project.id, child.id).comments[0]!.body,
+    "New information to preserve",
+  );
+  assert.equal(store.get(project.id, child.id).body, child.body);
+});
+
+test("bulk completion respects the selected dependency set and spec children atomically", (t) => {
+  const { store, project, create, select } = fixture(t);
+  const spec = store.create(project.id, {
+    kind: "spec",
+    title: "Plan",
+    body: "Original",
+  });
+  const a = create("First", [], spec.id);
+  const b = create("Second", [a.id], spec.id);
+  const independent = create("Independent");
+  const selection = select(spec, b, a);
+  assert.throws(
+    () => store.previewBulk(project.id, "done", [independent, b]),
+    /Unfinished blockers/,
+  );
+  assert.equal(store.get(project.id, independent.id).status, "ready-for-agent");
+  assert.throws(
+    () => store.previewBulk(project.id, "done", select(spec)),
+    /Unfinished tickets/,
+  );
+  const plan = store.previewBulk(project.id, "done", selection);
+  assert.equal(store.get(project.id, a.id).status, "ready-for-agent");
+  store.applyBulk(project.id, "done", selection, plan.token);
+  for (const doc of [spec, a, b]) {
+    assert.equal(store.get(project.id, doc.id).status, "done");
+    assert.equal(store.get(project.id, doc.id).revision, 2);
+  }
+  assert.equal(store.get(project.id, independent.id).status, "ready-for-agent");
+});
+
+test("bulk deletion cascades spec tickets and notes but protects surviving dependents", (t) => {
+  const { store, path, project, create, select } = fixture(t);
+  const spec = store.create(project.id, {
+    kind: "spec",
+    title: "Plan",
+    body: "Original",
+  });
+  const a = create("First", [], spec.id);
+  const b = create("Second", [a.id], spec.id);
+  const outside = create("Outside", [b.id]);
+  store.comment(project.id, b.id, "Delete this note too");
+  assert.throws(
+    () => store.previewBulk(project.id, "delete", select(spec)),
+    /Surviving dependents/,
+  );
+  assert.throws(
+    () => store.previewBulk(project.id, "delete", [a]),
+    /Surviving dependents/,
+  );
+  for (const doc of [a, b, outside]) store.status(project.id, doc.id, "done");
+  assert.throws(
+    () => store.previewBulk(project.id, "delete", select(spec)),
+    /Surviving dependents/,
+  );
+  const currentOutside = store.get(project.id, outside.id);
+  const leafPlan = store.previewBulk(project.id, "delete", [currentOutside]);
+  store.applyBulk(project.id, "delete", [currentOutside], leafPlan.token);
+  assert.deepEqual(store.get(project.id, b.id).blockers, [a.id]);
+  const plan = store.previewBulk(project.id, "delete", select(spec));
+  assert.deepEqual(
+    new Set(plan.documents.map((doc) => doc.id)),
+    new Set([spec.id, a.id, b.id]),
+  );
+  store.applyBulk(project.id, "delete", select(spec), plan.token);
+  const reader = new Store(path);
+  assert.deepEqual(reader.export(project.id).documents, []);
+  reader.close();
+});
+
+test("HTTP bulk actions require safe requests and current confirmation of the exact affected set", async (t) => {
+  const { store, project, create, path, dir, select } = fixture(t);
+  const spec = store.create(project.id, {
+    kind: "spec",
+    title: "Plan",
+    body: "Original",
+  });
+  const a = create("First", [], spec.id);
+  const b = create("Second", [a.id], spec.id);
+  const server = serve(store);
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  t.after(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const endpoint = `${base}/api/projects/${project.id}/documents/bulk`;
+  const headers = {
+    Origin: base,
+    "Content-Type": "application/json",
+    "X-Cairn-Request": "bulk",
+  };
+  const send = (body: unknown, overrides = headers, url = endpoint) =>
+    fetch(url, {
+      method: "POST",
+      headers: overrides,
+      body: JSON.stringify(body),
+    });
+  const selection = select(spec, b, a);
+  const requestBody = { action: "done", selection };
+  const preview = await send(requestBody);
+  assert.equal(preview.status, 200);
+  const plan = await preview.json();
+  assert.equal(store.get(project.id, a.id).status, "ready-for-agent");
+  for (const unsafe of [
+    { ...headers, Origin: "https://evil.invalid" },
+    { ...headers, Origin: "null" },
+    { "Content-Type": "application/json", "X-Cairn-Request": "bulk" },
+    { Origin: base, "Content-Type": "application/json" },
+    { ...headers, "Sec-Fetch-Site": "cross-site" },
+  ])
+    assert.equal((await send(requestBody, unsafe)).status, 403);
+  assert.equal(
+    (await send(requestBody, { ...headers, "Content-Type": "text/plain" }))
+      .status,
+    415,
+  );
+  for (const body of [
+    null,
+    [],
+    {},
+    { ...requestBody, action: "reopen" },
+    { ...requestBody, selection: [] },
+    { ...requestBody, selection: [{ id: a.id, revision: 0 }] },
+    { ...requestBody, selection: [a, a] },
+    { ...requestBody, token: null },
+    { ...requestBody, unexpected: true },
+  ])
+    assert.equal((await send(body)).status, 400);
+  assert.equal((await fetch(endpoint)).status, 405);
+  assert.equal(
+    (await fetch(endpoint, { method: "DELETE", headers })).status,
+    405,
+  );
+  assert.equal((await send({ action: "done", selection: [b] })).status, 400);
+  assert.equal(
+    (await send({ ...requestBody, token: "0".repeat(64) })).status,
+    409,
+  );
+  store.update(project.id, b.id, { title: "Changed elsewhere" });
+  assert.equal((await send({ ...requestBody, token: plan.token })).status, 409);
+  assert.equal(store.get(project.id, a.id).status, "ready-for-agent");
+
+  const fresh = {
+    action: "done",
+    selection: select(...store.list(project.id)),
+  };
+  const freshPlan = await (await send(fresh)).json();
+  assert.equal((await send({ ...fresh, token: freshPlan.token })).status, 200);
+  const reader = new Store(path);
+  assert.equal(reader.get(project.id, spec.id).status, "done");
+  assert.equal(reader.get(project.id, b.id).body, b.body);
+  reader.close();
+
+  const otherRepo = join(dir, "other");
+  mkdirSync(otherRepo);
+  execFileSync("git", ["init", "-b", "main", otherRepo], { stdio: "ignore" });
+  const other = store.register(otherRepo);
+  assert.equal(
+    (
+      await send(
+        fresh,
+        headers,
+        `${base}/api/projects/${other.id}/documents/bulk`,
+      )
+    ).status,
+    400,
+  );
+  const deletion = {
+    action: "delete",
+    selection: select(store.get(project.id, spec.id)),
+  };
+  const deletePlan = await (await send(deletion)).json();
+  store.status(project.id, spec.id, "ready-for-agent");
+  const currentDeletion = {
+    action: "delete",
+    selection: select(store.get(project.id, spec.id)),
+  };
+  const currentPlan = await (await send(currentDeletion)).json();
+  create("New child", [], spec.id);
+  assert.equal(
+    (await send({ ...currentDeletion, token: currentPlan.token })).status,
+    409,
+  );
+  assert.equal(store.list(project.id).length, 4);
+  assert.equal(
+    (await send({ ...deletion, token: deletePlan.token })).status,
+    409,
+  );
+  const latestDeletion = {
+    action: "delete",
+    selection: select(store.get(project.id, spec.id)),
+  };
+  const latestPlan = await (await send(latestDeletion)).json();
+  assert.equal(latestPlan.documents.length, 4);
+  assert.equal(
+    (await send({ ...latestDeletion, token: latestPlan.token })).status,
+    200,
+  );
+  assert.deepEqual(store.list(project.id), []);
+});
 
 test("two-state frontier follows completion and preserves dependency ordering", (t) => {
   const { store, project, create } = fixture(t);
@@ -178,8 +447,9 @@ test("Markdown, notes, revisions and exports persist across connections", (t) =>
     title: "Unicode",
     body,
   });
-  store.comment(project.id, spec.id, "A decision");
-  store.update(project.id, spec.id, { title: "New title", revision: 1 });
+  const withNote = store.comment(project.id, spec.id, "A decision");
+  assert.equal(withNote.revision, 2);
+  store.update(project.id, spec.id, { title: "New title", revision: withNote.revision });
   assert.throws(
     () => store.update(project.id, spec.id, { body: "Stale", revision: 1 }),
     /Revision conflict/,
@@ -192,7 +462,7 @@ test("Markdown, notes, revisions and exports persist across connections", (t) =>
       "A decision",
     );
     assert.equal(reader.export(project.id).documents[0]!.body, body);
-    assert.equal(reader.get(project.id, spec.id).revision, 2);
+    assert.equal(reader.get(project.id, spec.id).revision, 3);
   } finally {
     reader.close();
   }

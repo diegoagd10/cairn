@@ -1,5 +1,5 @@
 import { DatabaseSync, backup } from "node:sqlite";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, chmodSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { homedir } from "node:os";
@@ -33,6 +33,9 @@ export type Detail = Document & {
   unresolved: string[];
   comments: { id: number; body: string; created_at: string }[];
 };
+export type BulkAction = "done" | "delete";
+export type DocumentRevision = { id: string; revision: number };
+export type BulkSelection = DocumentRevision & { tickets?: DocumentRevision[] };
 type Create = {
   kind: Kind;
   title: string;
@@ -53,6 +56,23 @@ function required(value: string, field: string) {
   if (typeof value !== "string" || !value.trim())
     throw new Error(`${field} must not be empty.`);
   return value;
+}
+function validRevisions(
+  refs: unknown,
+  allowEmpty = false,
+): refs is DocumentRevision[] {
+  return (
+    Array.isArray(refs) &&
+    (allowEmpty || refs.length > 0) &&
+    refs.every(
+      (ref) =>
+        ref &&
+        typeof ref.id === "string" &&
+        Number.isSafeInteger(ref.revision) &&
+        ref.revision > 0,
+    ) &&
+    new Set(refs.map((ref) => ref.id)).size === refs.length
+  );
 }
 
 export class Store {
@@ -401,12 +421,152 @@ export class Store {
       return this.get(projectId, id);
     });
   }
+  private bulkPlan(
+    projectId: string,
+    action: BulkAction,
+    selection: BulkSelection[],
+  ) {
+    if (!["done", "delete"].includes(action))
+      throw new Error("Invalid bulk action.");
+    if (!validRevisions(selection))
+      throw new Error("Select unique documents with positive revisions.");
+    const all = this.list(projectId);
+    const documents = selection.map((ref) => {
+      const doc = this.get(projectId, ref.id);
+      if (doc.revision !== ref.revision)
+        throw new Error("Revision conflict. Review the selection again.");
+      if (doc.kind === "spec") {
+        if (!validRevisions(ref.tickets, true))
+          throw new Error("Select a spec with its current ticket revisions.");
+        const expected = new Map(
+          ref.tickets.map((ticket) => [ticket.id, ticket.revision]),
+        );
+        const children = all.filter((child) => child.parent_id === doc.id);
+        if (
+          children.length !== expected.size ||
+          children.some((child) => expected.get(child.id) !== child.revision)
+        )
+          throw new Error(
+            "Revision conflict. The spec's tickets changed. Review the selection again.",
+          );
+      }
+      return doc;
+    });
+    if (action === "delete") {
+      const specs = new Set(
+        documents.filter((doc) => doc.kind === "spec").map((doc) => doc.id),
+      );
+      const selected = new Set(documents.map((doc) => doc.id));
+      documents.push(
+        ...all.filter(
+          (doc) =>
+            doc.parent_id && specs.has(doc.parent_id) && !selected.has(doc.id),
+        ),
+      );
+    }
+    documents.sort((a, b) => a.id.localeCompare(b.id));
+    const ids = new Set(documents.map((doc) => doc.id));
+    if (action === "delete") {
+      const dependents = all.filter(
+        (doc) => !ids.has(doc.id) && doc.blockers.some((id) => ids.has(id)),
+      );
+      if (dependents.length)
+        throw new Error(
+          `Surviving dependents: ${dependents.map((doc) => doc.id).join(", ")}. Select them too before deleting.`,
+        );
+    } else
+      for (const doc of documents) {
+        const unfinished = doc.unresolved.filter((id) => !ids.has(id));
+        if (unfinished.length)
+          throw new Error(
+            `Unfinished blockers for ${doc.id}: ${unfinished.join(", ")}. Select them first.`,
+          );
+        if (doc.kind === "spec") {
+          const children = all.filter(
+            (child) =>
+              child.parent_id === doc.id &&
+              child.status !== "done" &&
+              !ids.has(child.id),
+          );
+          if (children.length)
+            throw new Error(
+              `Unfinished tickets for ${doc.id}: ${children.map((child) => child.id).join(", ")}. Select them first.`,
+            );
+        }
+      }
+    const token = createHash("sha256")
+      .update(JSON.stringify({ projectId, action, documents }))
+      .digest("hex");
+    return {
+      action,
+      token,
+      documents: documents.map(({ id, revision, kind, title, status }) => ({
+        id,
+        revision,
+        kind,
+        title,
+        status,
+      })),
+    };
+  }
+  previewBulk(
+    projectId: string,
+    action: BulkAction,
+    selection: BulkSelection[],
+  ) {
+    return this.transaction(() => this.bulkPlan(projectId, action, selection));
+  }
+  applyBulk(
+    projectId: string,
+    action: BulkAction,
+    selection: BulkSelection[],
+    token: string,
+  ) {
+    return this.transaction(() => {
+      const plan = this.bulkPlan(projectId, action, selection);
+      if (token !== plan.token)
+        throw new Error(
+          "Revision conflict. Review and confirm the selection again.",
+        );
+      if (action === "delete") {
+        for (const doc of plan.documents) {
+          this.db
+            .prepare("DELETE FROM comments WHERE document_id=?")
+            .run(doc.id);
+          this.db
+            .prepare("DELETE FROM blockers WHERE ticket_id=? OR blocker_id=?")
+            .run(doc.id, doc.id);
+        }
+        // Remove children first; parent references deliberately do not cascade.
+        for (const doc of [...plan.documents].sort(
+          (a, b) => Number(a.kind === "spec") - Number(b.kind === "spec"),
+        ))
+          this.db.prepare("DELETE FROM documents WHERE id=?").run(doc.id);
+      } else {
+        for (const doc of plan.documents)
+          if (doc.status !== "done")
+            this.db
+              .prepare(
+                "UPDATE documents SET status='done',revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+              )
+              .run(doc.id);
+      }
+      return plan;
+    });
+  }
   comment(projectId: string, id: string, body: string) {
-    this.get(projectId, id);
-    this.db
-      .prepare("INSERT INTO comments(document_id,body) VALUES(?,?)")
-      .run(id, required(body, "Comment"));
-    return this.get(projectId, id);
+    return this.transaction(() => {
+      this.get(projectId, id);
+      this.db
+        .prepare("INSERT INTO comments(document_id,body) VALUES(?,?)")
+        .run(id, required(body, "Comment"));
+      this.db
+        .prepare(
+          "UPDATE documents SET revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?",
+        )
+        .run(id);
+      return this.get(projectId, id);
+    });
   }
   next(projectId: string) {
     return this.list(projectId, "ticket").filter(

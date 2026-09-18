@@ -97,8 +97,11 @@ export function serve(
       const docMatch = url.pathname.match(
         /^\/api\/projects\/([^/]+)\/documents\/([^/]+)$/,
       );
-      const writeMatch = statusMatch || docMatch;
-      const action = statusMatch ? "status" : "edit";
+      const bulkMatch = url.pathname.match(
+        /^\/api\/projects\/([^/]+)\/documents\/bulk$/,
+      );
+      const writeMatch = bulkMatch || statusMatch || docMatch;
+      const action = bulkMatch ? "bulk" : statusMatch ? "status" : "edit";
       const limit = statusMatch ? 4096 : 1024 * 1024;
       if (req.method === "POST" && writeMatch) {
         if (
@@ -135,6 +138,39 @@ export function serve(
           chunks.push(chunk);
         }
         const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        if (bulkMatch) {
+          if (
+            !body ||
+            typeof body !== "object" ||
+            Array.isArray(body) ||
+            Object.keys(body).some(
+              (key) => !["action", "selection", "token"].includes(key),
+            ) ||
+            !["done", "delete"].includes(body.action) ||
+            (body.token !== undefined &&
+              (typeof body.token !== "string" ||
+                !/^[a-f0-9]{64}$/.test(body.token)))
+          ) {
+            send(400, {
+              error:
+                "Expected a bulk action, document selection and optional confirmation token.",
+            });
+            return;
+          }
+          const projectId = decodeURIComponent(bulkMatch[1]!);
+          send(
+            200,
+            body.token === undefined
+              ? store.previewBulk(projectId, body.action, body.selection)
+              : store.applyBulk(
+                  projectId,
+                  body.action,
+                  body.selection,
+                  body.token,
+                ),
+          );
+          return;
+        }
         if (
           !body ||
           typeof body !== "object" ||
@@ -178,10 +214,10 @@ export function serve(
         );
         return;
       }
-      if (req.method !== "GET") {
+      if (req.method !== "GET" || bulkMatch) {
         res.setHeader(
           "Allow",
-          statusMatch ? "POST" : docMatch ? "GET, POST" : "GET",
+          bulkMatch || statusMatch ? "POST" : docMatch ? "GET, POST" : "GET",
         );
         send(405, {
           error:

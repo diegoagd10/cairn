@@ -49,11 +49,15 @@ const state = {
   filter: defaultStatus,
   savingStatus: false,
   savingEdit: false,
+  savingBulk: false,
+  checked: new Map(),
+  bulkConfirmation: null,
 };
 // Keep drafts across in-app navigation; polling must never replace typed text.
 const drafts = new Map();
 const draftKey = (project, doc) => `${project}/${doc}`;
 let generation = 0;
+let selectionGeneration = 0;
 let lastSnapshot = "";
 const route = () => new URLSearchParams(location.hash.slice(1));
 const href = (project, doc) =>
@@ -167,14 +171,169 @@ function renderOverview() {
     : "Specs and tickets, together.";
   $("#document-count").textContent = state.docs.length;
 }
-function renderList() {
-  const docs = state.docs
+function visibleDocuments() {
+  return state.docs
     .filter((d) => state.kind === "all" || d.kind === state.kind)
     .filter((d) =>
       `${d.title} ${d.id}`.toLowerCase().includes(state.query.toLowerCase()),
     )
     .filter((d) => state.filter === "all" || d.status === state.filter)
     .sort(compareDocuments);
+}
+function clearSelection() {
+  ++selectionGeneration;
+  state.checked.clear();
+  $("#bulk-feedback").hidden = true;
+}
+function checkDocument(doc) {
+  state.checked.set(doc.id, {
+    id: doc.id,
+    revision: doc.revision,
+    ...(doc.kind === "spec" ? {
+      tickets: tickets(doc).map(({ id, revision }) => ({ id, revision })),
+    } : {}),
+  });
+}
+function renderBulkControls() {
+  const visible = visibleDocuments();
+  const checked = visible.filter((doc) => state.checked.has(doc.id)).length;
+  const busy = state.savingBulk || Boolean(state.bulkConfirmation);
+  const all = $("#select-all");
+  all.checked = Boolean(visible.length && checked === visible.length);
+  all.indeterminate = checked > 0 && checked < visible.length;
+  all.disabled = busy || !visible.length;
+  $("#selection-count").textContent = `${state.checked.size} selected`;
+  for (const id of ["#bulk-done", "#bulk-delete"])
+    $(id).disabled = busy || !state.checked.size;
+  for (const checkbox of document.querySelectorAll("[data-check-document]"))
+    checkbox.disabled = busy;
+  for (const id of ["#bulk-cancel", "#bulk-confirm"])
+    $(id).disabled = state.savingBulk;
+}
+function bulkFeedback(message, failed = false) {
+  const feedback = $("#bulk-feedback");
+  feedback.textContent = message;
+  feedback.setAttribute("role", failed ? "alert" : "status");
+  feedback.hidden = false;
+}
+function bulkRequest(projectId, body) {
+  return api(`/api/projects/${encodeURIComponent(projectId)}/documents/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Cairn-Request": "bulk" },
+    body: JSON.stringify(body),
+  });
+}
+async function prepareBulk(action) {
+  if (state.savingBulk || state.bulkConfirmation || !state.checked.size) return;
+  const projectId = state.project.id;
+  const hash = location.hash;
+  const selectionVersion = selectionGeneration;
+  const selection = [...state.checked.values()];
+  let stale = false;
+  state.savingBulk = true;
+  ++generation;
+  $("#bulk-feedback").hidden = true;
+  renderBulkControls();
+  try {
+    const plan = await bulkRequest(projectId, { action, selection });
+    if (
+      state.project?.id !== projectId ||
+      location.hash !== hash ||
+      selectionVersion !== selectionGeneration
+    ) return;
+    state.bulkConfirmation = { projectId, action, selection, plan };
+    const deleting = action === "delete";
+    $("#bulk-dialog-title").textContent =
+      `${deleting ? "Delete" : "Mark done"}: ${plan.documents.length} items`;
+    $("#bulk-dialog-description").textContent = deleting
+      ? "These items and their notes will be permanently deleted. Tickets belonging to selected specs are included. This cannot be undone."
+      : "These selected items will be marked as done. No unselected items will be completed.";
+    $("#bulk-dialog-items").innerHTML = plan.documents
+      .map(
+        (doc) =>
+          `<li><strong>${escape(doc.title)}</strong><span>${escape(doc.id)} · ${doc.kind === "spec" ? "Spec" : "Ticket"}${deleting && !state.checked.has(doc.id) ? " · Included with spec" : ""}</span></li>`,
+      )
+      .join("");
+    const confirm = $("#bulk-confirm");
+    confirm.textContent = deleting ? "Delete permanently" : "Mark done";
+    confirm.classList.toggle("danger-button", deleting);
+    $("#bulk-dialog").showModal();
+  } catch (error) {
+    if (state.project?.id === projectId) {
+      if (error.status === 409) {
+        stale = true;
+        clearSelection();
+      }
+      bulkFeedback(error.message, true);
+    }
+  } finally {
+    state.savingBulk = false;
+    renderBulkControls();
+    if (state.bulkConfirmation) $("#bulk-cancel").focus();
+    if (stale || location.hash !== hash) {
+      lastSnapshot = "";
+      await load();
+    }
+  }
+}
+async function confirmBulk() {
+  const confirmation = state.bulkConfirmation;
+  if (!confirmation || state.savingBulk) return;
+  const { projectId, action, selection, plan } = confirmation;
+  state.savingBulk = true;
+  ++generation;
+  renderBulkControls();
+  let failure;
+  try {
+    await bulkRequest(projectId, { action, selection, token: plan.token });
+    if (action === "delete")
+      for (const doc of plan.documents)
+        drafts.delete(draftKey(projectId, doc.id));
+    clearSelection();
+  } catch (error) {
+    failure = error;
+    if (error.status === 409) clearSelection();
+  } finally {
+    state.savingBulk = false;
+    $("#bulk-dialog").close();
+    state.bulkConfirmation = null;
+    lastSnapshot = "";
+    await load();
+    renderBulkControls();
+  }
+  if (state.project?.id === projectId)
+    bulkFeedback(
+      failure
+        ? failure.message
+        : `${plan.documents.length} items ${action === "delete" ? "deleted permanently" : "marked done"}.`,
+      Boolean(failure),
+    );
+}
+$("#select-all").addEventListener("change", (event) => {
+  const checked = event.target.checked;
+  clearSelection();
+  if (checked)
+    for (const doc of visibleDocuments())
+      checkDocument(doc);
+  renderList();
+});
+$("#bulk-done").addEventListener("click", () => prepareBulk("done"));
+$("#bulk-delete").addEventListener("click", () => prepareBulk("delete"));
+$("#bulk-confirm").addEventListener("click", confirmBulk);
+$("#bulk-cancel").addEventListener("click", () => $("#bulk-dialog").close());
+$("#bulk-dialog").addEventListener("cancel", (event) => {
+  if (state.savingBulk) event.preventDefault();
+});
+$("#bulk-dialog").addEventListener("close", () => {
+  state.bulkConfirmation = null;
+  renderBulkControls();
+});
+function renderList() {
+  const docs = visibleDocuments();
+  const visibleIds = new Set(docs.map((doc) => doc.id));
+  for (const id of state.checked.keys())
+    if (!visibleIds.has(id)) state.checked.delete(id);
+  renderBulkControls();
   $("#documents").className = docs.length ? "issue-list" : "";
   if (!docs.length) {
     const filtered =
@@ -186,6 +345,7 @@ function renderList() {
     $("#documents").innerHTML =
       `<div class="empty"><span class="empty-symbol" aria-hidden="true">◇</span><h2>${!state.project ? "Every path starts somewhere." : filtered ? "No matching work." : "No work items yet."}</h2><p>${!state.project ? "Register a repository to give its plans a home." : filtered ? "No specs or tickets match your current filters." : "Create a spec or ticket with your agent and it will appear here."}</p>${filtered && state.project ? filterAction : `<code>${!state.project ? "cairn project add /path/to/repo" : 'cairn spec create --title &quot;Your plan&quot; --body-file /tmp/spec.md'}</code>`}</div>`;
     $("#clear-filters")?.addEventListener("click", () => {
+      clearSelection();
       state.query = "";
       state.kind = "all";
       state.filter = defaultStatus;
@@ -214,10 +374,21 @@ function renderList() {
         .replace(/[#*`>\[\]]/g, "")
         .replace(/\s+/g, " ")
         .trim();
-      return `<div class="document-card ${d.kind}-row ${d.parent_id ? "has-parent" : ""} ${d.id === state.selected ? "selected" : ""}"><a class="document-link" data-document="${escape(d.id)}" href="${href(state.project.id, d.id)}" aria-label="Open ${escape(d.title)}"><span class="kind-icon ${escape(d.kind)}" aria-hidden="true">${d.kind === "spec" ? "◆" : "○"}</span><span class="card-content"><span class="card-top"><span class="card-title-line"><span class="card-title">${escape(d.title)}</span><span class="kind-badge">${d.kind === "spec" ? "Spec" : "Ticket"}</span>${badge(d)}</span></span><span class="card-excerpt">${escape(plain)}</span><span class="card-bottom"><span>${escape(summary)}</span><span>Created ${date(d.created_at)}</span></span>${children.length ? `<span class="progress-track"><progress value="${done}" max="${children.length}" aria-label="Completed tickets"></progress></span>` : ""}</span><span class="arrow" aria-hidden="true">›</span></a><span class="card-id-actions"><span class="doc-id">${escape(d.id)}</span>${copyButton(d.id)}</span></div>`;
+      return `<div class="document-card ${d.kind}-row ${d.parent_id ? "has-parent" : ""} ${d.id === state.selected ? "selected" : ""}"><input class="document-checkbox" type="checkbox" data-check-document="${escape(d.id)}" aria-label="Select ${escape(d.title)}" ${state.checked.has(d.id) ? "checked" : ""} ${state.savingBulk || state.bulkConfirmation ? "disabled" : ""} /><a class="document-link" data-document="${escape(d.id)}" href="${href(state.project.id, d.id)}" aria-label="Open ${escape(d.title)}"><span class="kind-icon ${escape(d.kind)}" aria-hidden="true">${d.kind === "spec" ? "◆" : "○"}</span><span class="card-content"><span class="card-top"><span class="card-title-line"><span class="card-title">${escape(d.title)}</span><span class="kind-badge">${d.kind === "spec" ? "Spec" : "Ticket"}</span>${badge(d)}</span></span><span class="card-excerpt">${escape(plain)}</span><span class="card-bottom"><span>${escape(summary)}</span><span>Created ${date(d.created_at)}</span></span>${children.length ? `<span class="progress-track"><progress value="${done}" max="${children.length}" aria-label="Completed tickets"></progress></span>` : ""}</span><span class="arrow" aria-hidden="true">›</span></a><span class="card-id-actions"><span class="doc-id">${escape(d.id)}</span>${copyButton(d.id)}</span></div>`;
     })
     .join("");
   bindCopyButtons($("#documents"));
+  for (const checkbox of document.querySelectorAll("[data-check-document]"))
+    checkbox.addEventListener("change", (event) => {
+      ++selectionGeneration;
+      const doc = state.docs.find(
+        (item) => item.id === checkbox.dataset.checkDocument,
+      );
+      if (event.target.checked) checkDocument(doc);
+      else state.checked.delete(doc.id);
+      $("#bulk-feedback").hidden = true;
+      renderBulkControls();
+    });
 }
 function related(ids) {
   return ids
@@ -459,7 +630,7 @@ $("#sidebar").addEventListener("click", (event) => {
     setSidebarOpen(false);
 });
 async function load({ focus = false } = {}) {
-  if (state.savingStatus || state.savingEdit) return;
+  if (state.savingStatus || state.savingEdit || state.savingBulk) return;
   const request = ++generation;
   try {
     const params = route();
@@ -496,6 +667,7 @@ async function load({ focus = false } = {}) {
     const changedProject = state.project?.id !== project?.id;
     const changedDocument = state.selected !== selected;
     if (changedProject) {
+      clearSelection();
       state.query = "";
       state.kind = "all";
       state.filter = defaultStatus;
@@ -519,14 +691,17 @@ async function load({ focus = false } = {}) {
   }
 }
 $("#search").addEventListener("input", (event) => {
+  clearSelection();
   state.query = event.target.value;
   renderList();
 });
 $("#kind").addEventListener("change", (event) => {
+  clearSelection();
   state.kind = event.target.value;
   renderList();
 });
 $("#status").addEventListener("change", (event) => {
+  clearSelection();
   state.filter = event.target.value;
   renderList();
 });
@@ -540,6 +715,7 @@ $("#refresh").addEventListener("click", async () => {
   $("#refresh-label").textContent = "Refresh";
 });
 document.addEventListener("keydown", (event) => {
+  if ($("#bulk-dialog").open) return;
   if (
     event.key === "/" &&
     !state.detail &&
@@ -559,7 +735,10 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = "";
   }
 });
-window.addEventListener("hashchange", () => load({ focus: true }));
+window.addEventListener("hashchange", () => {
+  if ($("#bulk-dialog").open && !state.savingBulk) $("#bulk-dialog").close();
+  load({ focus: true });
+});
 setSidebarOpen(!mobileSidebar.matches);
 await load();
 setInterval(() => {
